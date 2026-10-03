@@ -137,12 +137,15 @@ struct ColorSetContents: Codable, Sendable {
     }
 
     struct Color: Codable, Sendable {
-        var colorSpace: String
-        var components: Components
+        /// Absent when the entry references a system color instead.
+        var colorSpace: String?
+        var components: Components?
+        /// A system color name such as "labelColor" (Xcode: Content > System color).
+        var reference: String?
 
         enum CodingKeys: String, CodingKey {
             case colorSpace = "color-space"
-            case components
+            case components, reference
         }
 
         struct Components: Codable, Sendable {
