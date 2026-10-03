@@ -64,6 +64,8 @@ struct RenditionKey: Hashable, Sendable {
             self.element = 0
             self.part = 0
             self.dimension2 = 0
+            // actool keys named colors at scale 1 (assetutil: "Scale": 1).
+            self.scale = 1
         case .preservedSource(let body):
             self.element = Element.bitmap.rawValue
             self.dimension2 = 0
