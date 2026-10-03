@@ -52,6 +52,9 @@ struct ColorBody: Sendable {
     var blue: Double
     var alpha: Double
     var colorSpaceID: UInt8
+    /// System color name ("labelColor"). The RGBA fields then hold a gray
+    /// fallback (red == green == blue) for runtimes that cannot resolve it.
+    var systemName: String? = nil
 }
 
 /// Source file kept verbatim inside a DWAR envelope rather than rasterised

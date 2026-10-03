@@ -70,4 +70,17 @@ struct CSIWriterTests {
         #expect(data[20..<24].allSatisfy { $0 == 0 } && data[28..<32].allSatisfy { $0 == 0 })
         #expect(Array(data[172..<176]) == [1, 0, 0, 0])
     }
+
+    @Test("System color reference matches actool 27.0's bytes (labelColor, light)")
+    func systemColorBody() {
+        // Captured from Xcode 27.0 actool; assetutil reads it as "System Color Name": "labelColor".
+        let referenceBody: [UInt8] = [
+            0x52, 0x4C, 0x4F, 0x43, 1, 0, 0, 0, 0x02, 0x01, 0, 0, 2, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xF0, 0x3F,
+            0x52, 0x4C, 0x4F, 0x43, 1, 0, 0, 0, 10, 0, 0, 0,
+        ] + Array("labelColor".utf8)
+        let body = ColorBody(red: 0, green: 0, blue: 0, alpha: 1, colorSpaceID: 1, systemName: "labelColor")
+        let data = [UInt8](CSIWriter.color(name: "label", body: body))
+        #expect(Array(data[(184 + 28)...]) == referenceBody)
+    }
 }
