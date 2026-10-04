@@ -34,13 +34,17 @@ enum ColorRenderer {
         for entry in set.contents.colors {
             let appearance = entry.appearances?.first { $0.darkLuminosity }
             if let systemName = entry.color.reference {
-                // ponytail: gray fallback is black (light) / white (dark), which is exact for
-                // labelColor; CoreUI resolves the name itself, so the fallback rarely shows.
-                let white: Double = appearance == nil ? 0 : 1
+                // actool resolves the reference to a per-system-color,
+                // per-appearance placeholder in the color's own space.
+                let variant = SystemColorPlaceholders.placeholder(
+                    named: systemName, dark: appearance != nil)
                 out.append(Rendition(
                     name: set.name, idiom: entry.idiom, scale: nil, appearance: appearance, gamut: .sRGB,
-                    body: .color(ColorBody(components: [white, 1], colorSpaceID: COLRColorSpace.grayGamma22.rawValue,
-                                           systemName: systemName))
+                    body: .color(ColorBody(
+                        components: variant.components,
+                        colorSpaceID: COLRColorSpace.grayGamma22.rawValue,
+                        systemName: systemName,
+                        systemColorSpaceID: variant.colorSpaceID))
                 ))
                 continue
             }

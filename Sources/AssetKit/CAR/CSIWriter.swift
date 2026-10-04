@@ -167,18 +167,20 @@ enum CSIWriter {
     }
 
     /// 'COLR' as an LE multi-char constant (file bytes R,L,O,C), version 1,
-    /// colorSpaceID with flag bits, component count, then Float64 components.
-    /// A system color is a gray fallback (colorspace 0x102, [white, alpha])
-    /// followed by a second COLR record holding the name (length + UTF-8).
+    /// colorSpaceID, component count, then Float64 components (each
+    /// quantized to Float32, as actool does). A system color is a
+    /// placeholder in that system color's own space (colorspaceID with the
+    /// 0x100 system flag, see `SystemColorPlaceholders`) followed by a
+    /// second COLR record holding the name (length + UTF-8).
     private static func colorBody(body: ColorBody) -> Data {
         var w = ByteWriter()
         w.writeLE(UInt32(0x434F_4C52))
         w.writeLE(UInt32(1))                    // version
         if let name = body.systemName {
-            w.writeLE(UInt32(0x102))            // gray gamma 2.2, as actool writes it
-            w.writeLE(UInt32(2))
+            w.writeLE(body.systemColorSpaceID)  // system space + 0x100 flag
+            w.writeLE(UInt32(body.components.count))
             for component in body.components {
-                w.writeLE(component.bitPattern)
+                w.writeLE(Double(Float(component)).bitPattern)
             }
             w.writeLE(UInt32(0x434F_4C52))
             w.writeLE(UInt32(1))

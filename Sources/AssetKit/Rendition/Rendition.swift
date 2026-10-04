@@ -81,9 +81,15 @@ struct ColorBody: Sendable {
     /// display-p3 3, extended-srgb 4, extended-linear-srgb 5, extended-gray 6;
     /// the gray fallback for system colors carries 0x102.
     var colorSpaceID: UInt8
-    /// System color name ("labelColor"). The components then hold a gray
-    /// fallback for runtimes that cannot resolve it.
+    /// System color name ("labelColor"). The components then hold the
+    /// per-appearance fallback for that system color (see
+    /// `SystemColorPlaceholders`).
     var systemName: String? = nil
+    /// COLR colorspace ID for the system-color fallback body: the color's
+    /// own space with the 0x100 system flag (0x101 srgb, 0x102 gray-gamma-22,
+    /// 0x104 extended-srgb, 0x106 extended-gray). Only read when
+    /// `systemName` is set.
+    var systemColorSpaceID: UInt32 = 0x102
 }
 
 /// Source file kept verbatim inside a DWAR envelope rather than rasterised

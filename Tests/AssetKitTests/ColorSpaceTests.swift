@@ -237,6 +237,95 @@ struct ColorSpaceTests {
         }
     }
 
+    @Test("System color references resolve to per-color placeholder bodies")
+    func systemColorPlaceholders() throws {
+        func referenceSet(named name: String, referencing reference: String) throws -> LoadedColorSet {
+            let json = """
+            {
+              "colors" : [
+                {
+                  "idiom" : "universal",
+                  "color" : { "platform" : "ios", "reference" : "\(reference)" }
+                }
+              ],
+              "info" : { "author" : "xcode", "version" : 1 }
+            }
+            """
+            let contents = try JSONDecoder().decode(ColorSetContents.self, from: Data(json.utf8))
+            return LoadedColorSet(name: name, directory: URL(fileURLWithPath: "/"), contents: contents)
+        }
+
+        func bodyHex(_ data: Data) -> String {
+            data[212...].map { String(format: "%02x", $0) }.joined()
+        }
+
+        // systemBackgroundColor: extended gray, white (light) / black (dark).
+        let bg = CSIWriter.color(
+            name: "SysBG",
+            body: .init(
+                components: SystemColorPlaceholders.placeholder(named: "systemBackgroundColor", dark: false).components,
+                colorSpaceID: 1,
+                systemName: "systemBackgroundColor",
+                systemColorSpaceID: SystemColorPlaceholders.placeholder(named: "systemBackgroundColor", dark: false).colorSpaceID))
+        #expect(bodyHex(bg) == "524c4f43010000000601000002000000000000000000f03f000000000000f03f524c4f43010000001500000073797374656d4261636b67726f756e64436f6c6f72")
+        let bgDark = CSIWriter.color(
+            name: "SysBG",
+            body: .init(
+                components: SystemColorPlaceholders.placeholder(named: "systemBackgroundColor", dark: true).components,
+                colorSpaceID: 1,
+                systemName: "systemBackgroundColor",
+                systemColorSpaceID: SystemColorPlaceholders.placeholder(named: "systemBackgroundColor", dark: true).colorSpaceID))
+        #expect(bodyHex(bgDark) == "524c4f430100000006010000020000000000000000000000000000000000f03f524c4f43010000001500000073797374656d4261636b67726f756e64436f6c6f72")
+
+        // systemRedColor: sRGB RGBA placeholder, dark differs.
+        let redLight = SystemColorPlaceholders.placeholder(named: "systemRedColor", dark: false)
+        #expect(redLight.colorSpaceID == 0x101 && redLight.components == [1, 0.22, 0.235, 1])
+        let redDark = SystemColorPlaceholders.placeholder(named: "systemRedColor", dark: true)
+        #expect(redDark.colorSpaceID == 0x101 && redDark.components == [1, 0.259, 0.271, 1])
+
+        // The spaces can differ per appearance (grouped background:
+        // extended sRGB light, extended gray dark).
+        #expect(SystemColorPlaceholders.placeholder(named: "systemGroupedBackgroundColor", dark: false).colorSpaceID == 0x104)
+        #expect(SystemColorPlaceholders.placeholder(named: "systemGroupedBackgroundColor", dark: true).colorSpaceID == 0x106)
+
+        // quaternarySystemFillColor bodies, oracle bytes verbatim.
+        let quatLightVariant = SystemColorPlaceholders.placeholder(named: "quaternarySystemFillColor", dark: false)
+        let quatLight = CSIWriter.color(
+            name: "Quat",
+            body: .init(
+                components: quatLightVariant.components,
+                colorSpaceID: 1,
+                systemName: "quaternarySystemFillColor",
+                systemColorSpaceID: quatLightVariant.colorSpaceID))
+        #expect(bodyHex(quatLight) == "524c4f4301000000040100000400000000000060b81edd3f00000060b81edd3f000000406210e03f00000040e17ab43f524c4f4301000000190000007175617465726e61727953797374656d46696c6c436f6c6f72")
+        let quatDarkVariant = SystemColorPlaceholders.placeholder(named: "quaternarySystemFillColor", dark: true)
+        let quatDark = CSIWriter.color(
+            name: "Quat",
+            body: .init(
+                components: quatDarkVariant.components,
+                colorSpaceID: 1,
+                systemName: "quaternarySystemFillColor",
+                systemColorSpaceID: quatDarkVariant.colorSpaceID))
+        #expect(bodyHex(quatDark) == "524c4f43010000000401000004000000000000c0caa1dd3f000000c0caa1dd3f000000406210e03f000000803d0ac73f524c4f4301000000190000007175617465726e61727953797374656d46696c6c436f6c6f72")
+
+        // Unlisted system names keep the historical gray fallback.
+        let unknown = SystemColorPlaceholders.placeholder(named: "someFutureSystemColor", dark: false)
+        #expect(unknown.colorSpaceID == 0x102 && unknown.components == [0, 1])
+
+        // The real NetNewsWire catalog compiles through the renderer.
+        let set = try referenceSet(named: "fullScreenBackgroundColor", referencing: "systemBackgroundColor")
+        let renditions = try ColorRenderer.renditions(for: set)
+        #expect(renditions.count == 1)
+        let light = renditions.first { $0.appearance?.darkLuminosity != true }
+        guard let light, case .color(let lightBody) = light.body else {
+            Issue.record("expected color body")
+            return
+        }
+        #expect(lightBody.systemName == "systemBackgroundColor")
+        #expect(lightBody.systemColorSpaceID == 0x106)
+        #expect(lightBody.components == [1, 1])
+    }
+
     @Test("Hex and 0-255 decimal component forms decode like Xcode's")
     func componentForms() throws {
         let json = """
