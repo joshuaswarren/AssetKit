@@ -50,7 +50,9 @@ struct BOMWriter {
         // Header placeholder; we patch addresses after we know payload size.
         writer.write(Array("BOMStore".utf8)) // 0x00: magic (8 bytes)
         writer.writeBE(UInt32(1))            // 0x08: version
-        writer.writeBE(UInt32(blocks.count)) // 0x0C: numberOfBlocks
+        // actool 27.0 counts only the real blocks (ids 1..n); the null entry
+        // 0 is present in the index but not counted.
+        writer.writeBE(UInt32(blocks.count - 1)) // 0x0C: numberOfBlocks
         writer.writeBE(UInt32(0))            // 0x10: indexOffset (patched)
         writer.writeBE(UInt32(0))            // 0x14: indexLength (patched)
         writer.writeBE(UInt32(0))            // 0x18: varsOffset (patched)
@@ -66,17 +68,17 @@ struct BOMWriter {
         }
 
         let indexOffset = UInt32(writer.offset)
-        // Header numberOfBlocks counts real blocks; the index table itself is
-        // padded to the fixed capacity actool writes (256 entries) with
-        // zero-length entries so the container shape matches the reference.
-        writer.writeBE(UInt32(blocks.count))
+        // The index table count is the table CAPACITY (actool 27.0: 256
+        // entries, unused tail zero-length), not the real block count.
+        let capacity = max(Self.indexCapacity, ((blocks.count + 255) / 256) * 256)
+        writer.writeBE(UInt32(capacity))
         for (i, block) in blocks.enumerated() {
             let addr = i == 0 ? UInt32(0) : blockOffsets[i]
             let len = UInt32(block.data.count)
             writer.writeBE(addr)
             writer.writeBE(len)
         }
-        let padding = max(0, Self.indexCapacity - blocks.count)
+        let padding = capacity - blocks.count
         if padding > 0 {
             for _ in 0..<padding {
                 writer.writeBE(UInt32(0))

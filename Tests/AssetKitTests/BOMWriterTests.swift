@@ -14,8 +14,9 @@ struct BOMWriterTests {
         #expect(Array(bytes.prefix(8)) == Array("BOMStore".utf8))
         // version is BE u32 at 0x08
         #expect(bytes[8...11] == [0, 0, 0, 1])
-        // numberOfBlocks is BE u32 at 0x0C; we have 2 (block 0 reserved + 1 we added)
-        #expect(bytes[12...15] == [0, 0, 0, 2])
+        // numberOfBlocks is BE u32 at 0x0C; actool counts real blocks only
+        // (block 0 is the reserved null entry, not counted) — 1 here.
+        #expect(bytes[12...15] == [0, 0, 0, 1])
         let indexOff = readU32BE(data, 0x10)
         let varsOff = readU32BE(data, 0x18)
         #expect(indexOff > 0)
