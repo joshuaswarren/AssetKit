@@ -2,19 +2,21 @@ import Foundation
 
 /// Writes BOM B+ trees in actool 27.0's physical layout.
 ///
-/// Layout (verified byte-level against actool 27.0 output):
+/// Leaf layout (verified byte-level against actool 27.0 output):
 ///
-/// - **Header block (29 bytes):** `'tree' u32-BE, version u32-BE(1), leaf
-///   blockID u32-BE, blockSize u32-BE (4096, or 1024 for BITMAPKEYS),
-///   pathCount u32-BE, isPathInternal u8, keyTrailerLength u32-BE, 4 zero
-///   bytes. The trailer length is the size of the key-byte run appended after
-///   the leaf's padding (0 for inline-key trees).
-/// - **Leaf block:** `isLeaf u16-BE(1), count u16-BE, forward u32-BE, backward
-///   u32-BE`, then `count * { valueBlockID u32-BE, keyBlockID u32-BE }` (or
-///   `{ valueBlockID u32-BE, inlineKey u32-BE }` when internal), zero-padded to
-///   blockSize, then the concatenated key bytes (`trailer`).
-/// - **Data blocks:** one block per key and one per value, allocated
-///   separately from the leaf.
+/// `[isLeaf u16-BE][count u16-BE][forward u32-BE][backward u32-BE]`
+/// `[count × { valueBlockID u32-BE, keyBlockID u32-BE }]`
+/// `[count × u32-BE zeros]` — a vestigial per-key offset array (zeroed in
+/// actool 27.0 output)
+/// `[key bytes concatenated]`
+///
+/// The whole leaf is zero-padded to the tree's block size (4096; 1024 for
+/// BITMAPKEYS) and then `keyAreaLength` extra zero bytes are appended — the
+/// key area is reserved twice in the file length.
+///
+/// The tree header records `keyTrailerLength` = the per-entry key byte
+/// length (18 for rendition keys, the facet name length for FACETKEYS, 0
+/// for internal-key trees).
 enum BOMTree {
     struct Entry {
         var key: Data
@@ -39,39 +41,69 @@ enum BOMTree {
         w.writeBE(blockSize)
         w.writeBE(UInt32(pathCount))
         w.write(byte: isInternal ? 1 : 0)
-        w.writeBE(UInt32(keyTrailerLength))
+        w.writeBE(UInt32(isInternal ? 0 : keyTrailerLength))
         w.writeZeros(4)
         precondition(w.offset == 29, "tree header must be 29 bytes; got \(w.offset)")
         return w.data
     }
 
-    /// Leaf block: entry table zero-padded to `blockSize`, then `trailer`
-    /// (the concatenated key bytes) appended after the padding. `keyIDs` are
-    /// the key data block ids, or the inline u32 keys when `isInternal`.
-    static func leaf(
-        entries: [(valueBlockID: UInt32, keyID: UInt32)],
-        blockSize: UInt32,
-        isInternal: Bool,
-        trailer: Data
+    /// External-key leaf: the entry table, a zero key-offset region
+    /// (count x u32), and the concatenated key bytes — then the whole leaf
+    /// is zero-padded to `blockSize` and `keyAreaLength` more zero bytes are
+    /// appended (the key area is reserved twice in the file length, as
+    /// actool 27.0 does).
+    static func leafExternal(
+        sorted: [(key: Data, value: Data)],
+        keyBlockIDs: [UInt32],
+        valueBlockIDs: [UInt32],
+        blockSize: UInt32
     ) -> Data {
+        precondition(sorted.count == keyBlockIDs.count && sorted.count == valueBlockIDs.count)
         var w = ByteWriter()
-        w.writeBE(UInt16(1)) // isLeaf
-        w.writeBE(UInt16(entries.count))
-        w.writeBE(UInt32(0)) // forward
-        w.writeBE(UInt32(0)) // backward
-        for entry in entries {
-            w.writeBE(entry.valueBlockID)
-            w.writeBE(entry.keyID)
+        w.writeBE(UInt16(1))
+        w.writeBE(UInt16(sorted.count))
+        w.writeBE(UInt32(0))
+        w.writeBE(UInt32(0))
+        for (i, entry) in sorted.enumerated() {
+            w.writeBE(valueBlockIDs[i])
+            w.writeBE(keyBlockIDs[i])
+        }
+        w.writeZeros(4)
+        for entry in sorted {
+            w.write(entry.key)
+        }
+        let keyAreaLength = sorted.reduce(0) { $0 + $1.key.count }
+        if w.offset < Int(blockSize) {
+            w.writeZeros(Int(blockSize) - w.offset)
+        }
+        w.writeZeros(keyAreaLength)
+        return w.data
+    }
+
+    /// Internal-key leaf (BITMAPKEYS): each entry stores the u32 key inline
+    /// (big-endian), followed by a zero offset slot; zero-padded to
+    /// `blockSize` with no key area.
+    static func leafInternal(
+        sorted: [(key: UInt32, value: Data)],
+        valueBlockIDs: [UInt32],
+        blockSize: UInt32
+    ) -> Data {
+        precondition(sorted.count == valueBlockIDs.count)
+        var w = ByteWriter()
+        w.writeBE(UInt16(1))
+        w.writeBE(UInt16(sorted.count))
+        w.writeBE(UInt32(0))
+        w.writeBE(UInt32(0))
+        for (i, entry) in sorted.enumerated() {
+            w.writeBE(valueBlockIDs[i])
+            w.writeBE(entry.key)
         }
         if w.offset < Int(blockSize) {
             w.writeZeros(Int(blockSize) - w.offset)
         }
-        w.write(trailer)
         return w.data
     }
 
-    /// Sorts entries by raw key bytes; BOM trees use byte-wise comparison and
-    /// CoreUI binary-searches rendition keys.
     static func byteCompare(_ a: Data, _ b: Data) -> Int {
         let count = min(a.count, b.count)
         for i in 0..<count {

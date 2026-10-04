@@ -25,27 +25,28 @@ struct BOMWriterTests {
 
     @Test("Tree round-trip: parse our own output structurally")
     func treeRoundTrip() {
-        let entries: [BOMTree.Entry] = [
-            .init(key: Data("alpha".utf8), value: Data([0x01])),
-            .init(key: Data("bravo".utf8), value: Data([0x02])),
-            .init(key: Data("charlie".utf8), value: Data([0x03])),
+        let sorted: [(key: Data, value: Data)] = [
+            (key: Data("alpha".utf8), value: Data([0x01])),
+            (key: Data("bravo".utf8), value: Data([0x02])),
+            (key: Data("charlie".utf8), value: Data([0x03])),
         ]
-        let sorted = entries.sorted { BOMTree.byteCompare($0.key, $1.key) < 0 }
-        var dataIDs: [(UInt32, UInt32)] = []
+        var keyIDs: [UInt32] = []
+        var valueIDs: [UInt32] = []
         var next: UInt32 = 1
         for _ in sorted {
-            dataIDs.append((next, next + 1))
+            keyIDs.append(next)
+            valueIDs.append(next + 1)
             next += 2
         }
-        let trailer = sorted.reduce(Data()) { $0 + $1.key }
-        let leafData = BOMTree.leaf(
-            entries: sorted.enumerated().map { (index, entry) in
-                (valueBlockID: dataIDs[index].1, key: dataIDs[index].0)
-            },
-            blockSize: BOMTree.defaultBlockSize, isInternal: false, trailer: trailer)
+        let perKeyLen = sorted.first?.key.count ?? 0
+        let leafData = BOMTree.leafExternal(
+            sorted: sorted,
+            keyBlockIDs: keyIDs,
+            valueBlockIDs: valueIDs,
+            blockSize: BOMTree.defaultBlockSize)
         let headerData = BOMTree.header(
             leafBlockID: next, blockSize: BOMTree.defaultBlockSize,
-            pathCount: sorted.count, isInternal: false, keyTrailerLength: trailer.count)
+            pathCount: sorted.count, isInternal: false, keyTrailerLength: perKeyLen)
 
         // Parse the leaf structurally.
         let leafBytes = [UInt8](leafData)
@@ -53,9 +54,22 @@ struct BOMWriterTests {
         let count = Int(leafBytes[2]) << 8 | Int(leafBytes[3])
         #expect(isLeaf == 1)
         #expect(count == 3)
-        // Padding to blockSize, then the key trailer.
-        #expect(leafBytes.count == Int(BOMTree.defaultBlockSize) + trailer.count)
-        #expect(Array(leafBytes[Int(BOMTree.defaultBlockSize)...]) == Array(trailer))
+        // Entry table, then a single zero u32, then embedded keys.
+        let entryEnd = 12 + count * 8
+        #expect(leafBytes[entryEnd..<(entryEnd + 4)].allSatisfy { $0 == 0 })
+        let keyArea = 16 + count * 8
+        _ = entryEnd
+        var cursor = keyArea
+        for entry in sorted {
+            let key = Array(leafBytes[cursor..<cursor + entry.key.count])
+            #expect(key == Array(entry.key))
+            cursor += entry.key.count
+        }
+        // Padded to blockSize, then the zero-filled key-area reserve
+        // (reserve length = total embedded key bytes, like actool).
+        let keyBytesTotal = sorted.reduce(0) { $0 + $1.key.count }
+        #expect(leafBytes.count == Int(BOMTree.defaultBlockSize) + keyBytesTotal)
+        #expect(leafBytes[Int(BOMTree.defaultBlockSize)...].allSatisfy { $0 == 0 })
 
         // Parse the header structurally.
         let headerBytes = [UInt8](headerData)
@@ -64,9 +78,11 @@ struct BOMWriterTests {
         let childBlock = Int(headerBytes[8]) << 24 | Int(headerBytes[9]) << 16
             | Int(headerBytes[10]) << 8 | Int(headerBytes[11])
         #expect(childBlock == next)
-        let trailerLen = Int(headerBytes[21]) << 24 | Int(headerBytes[22]) << 16
-            | Int(headerBytes[23]) << 8 | Int(headerBytes[24])
-        #expect(trailerLen == trailer.count)
+        var trailerValue: Int = 0
+        for offset in 21...24 {
+            trailerValue = trailerValue << 8 | Int(headerBytes[offset])
+        }
+        #expect(trailerValue == perKeyLen)
     }
 
     private func readU32BE(_ data: Data, _ offset: Int) -> UInt32 {

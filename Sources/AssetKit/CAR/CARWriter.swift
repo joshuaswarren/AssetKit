@@ -19,9 +19,8 @@ import Foundation
 ///     blocks
 /// 11. Block index padded to 256 entries.
 ///
-/// Tree leaves are 4096-padded (1024 for BITMAPKEYS) with the concatenated
-/// key bytes appended after the padding; the trailer length is recorded in
-/// the tree header.
+/// Tree leaves embed the sorted key bytes after a per-entry key-offset array
+/// (see `BOMTree`); the same key/value bytes live in their own blocks.
 struct CARWriter: Sendable {
     var deploymentTarget: String
     var renditions: [Rendition]
@@ -45,9 +44,6 @@ struct CARWriter: Sendable {
         // ---- Tree contents ----
         let renditionData: [(key: Data, value: Data)] = renditions.map { rendition in
             (RenditionKey(rendition: rendition).encode(format: keyFormat), csiData(for: rendition))
-        }
-        let renditionsSorted = renditionData.sorted {
-            BOMTree.byteCompare($0.key, $1.key) < 0
         }
         let facetData: [(key: Data, value: Data)] = layout.assets
             .map { asset in (Data(asset.name.utf8), FacetKeys.value(for: asset.name, kind: asset.kind)) }
@@ -84,36 +80,36 @@ struct CARWriter: Sendable {
 
         bom.addBlock(BOMTree.header(
             leafBlockID: renditionsTree.value, blockSize: BOMTree.defaultBlockSize,
-            pathCount: renditionsSorted.count, isInternal: false,
-            keyTrailerLength: renditionData.reduce(0) { $0 + $1.key.count }))
-        bom.addBlock(BOMTree.leaf(
-            entries: zip(renditionsSorted, renditionsDataIDs).map { _, ids in
-                (valueBlockID: ids.value, keyID: ids.key)
-            },
-            blockSize: BOMTree.defaultBlockSize, isInternal: false,
-            trailer: renditionData.reduce(Data()) { $0 + $1.key }))
-
+            pathCount: renditionData.count, isInternal: false,
+            keyTrailerLength: renditionData.first?.key.count ?? 0))
+        // Leaf entries are key-sorted; data blocks stay in list order.
+        let renditionsWithIDs = zip(renditionData, renditionsDataIDs)
+            .map { entry, ids in (entry: entry, ids: ids) }
+            .sorted { BOMTree.byteCompare($0.entry.key, $1.entry.key) < 0 }
+        bom.addBlock(BOMTree.leafExternal(
+            sorted: renditionsWithIDs.map { $0.entry },
+            keyBlockIDs: renditionsWithIDs.map { $0.ids.key },
+            valueBlockIDs: renditionsWithIDs.map { $0.ids.value },
+            blockSize: BOMTree.defaultBlockSize))
         bom.addBlock(BOMTree.header(
             leafBlockID: facetTree.value, blockSize: BOMTree.defaultBlockSize,
             pathCount: facetData.count, isInternal: false,
-            keyTrailerLength: facetData.reduce(0) { $0 + $1.key.count }))
-        bom.addBlock(BOMTree.leaf(
-            entries: zip(facetData, facetDataIDs).map { _, ids in
-                (valueBlockID: ids.value, keyID: ids.key)
-            },
-            blockSize: BOMTree.defaultBlockSize, isInternal: false,
-            trailer: facetData.reduce(Data()) { $0 + $1.key }))
+            keyTrailerLength: facetData.first?.key.count ?? 0))
+        bom.addBlock(BOMTree.leafExternal(
+            sorted: facetData,
+            keyBlockIDs: facetDataIDs.map { $0.key },
+            valueBlockIDs: facetDataIDs.map { $0.value },
+            blockSize: BOMTree.defaultBlockSize))
 
         bom.addBlock(BOMTree.header(
             leafBlockID: appearanceTree.value, blockSize: BOMTree.defaultBlockSize,
             pathCount: appearanceData.count, isInternal: false,
-            keyTrailerLength: appearanceData.reduce(0) { $0 + $1.key.count }))
-        bom.addBlock(BOMTree.leaf(
-            entries: zip(appearanceData, appearanceDataIDs).map { _, ids in
-                (valueBlockID: ids.value, keyID: ids.key)
-            },
-            blockSize: BOMTree.defaultBlockSize, isInternal: false,
-            trailer: appearanceData.reduce(Data()) { $0 + $1.key }))
+            keyTrailerLength: appearanceData.first?.key.count ?? 0))
+        bom.addBlock(BOMTree.leafExternal(
+            sorted: appearanceData,
+            keyBlockIDs: appearanceDataIDs.map { $0.key },
+            valueBlockIDs: appearanceDataIDs.map { $0.value },
+            blockSize: BOMTree.defaultBlockSize))
 
         for (entry, _) in zip(appearanceData, appearanceDataIDs) {
             bom.addBlock(entry.key)
@@ -124,6 +120,8 @@ struct CARWriter: Sendable {
             bom.addBlock(entry.value)
         }
         bom.addBlock(KeyFormatBlock.data(attributes: keyFormat))
+        // Rendition data blocks follow the list order (the ids were assigned
+        // in list order; the leaf references them by id).
         for (entry, _) in zip(renditionData, renditionsDataIDs) {
             bom.addBlock(entry.key)
             bom.addBlock(entry.value)
@@ -134,15 +132,16 @@ struct CARWriter: Sendable {
             bom.addBlock(BOMTree.header(
                 leafBlockID: bitmapLeafID, blockSize: 1024,
                 pathCount: bitmapData.count, isInternal: true, keyTrailerLength: 0))
-            bom.addBlock(BOMTree.leaf(
-                entries: zip(bitmapData, bitmapValueIDs).map { entry, valueID in
+            bom.addBlock(BOMTree.leafInternal(
+                sorted: bitmapData.map { entry in
                     let inline = entry.key.withContiguousStorageIfAvailable { bytes -> UInt32 in
                         UInt32(bytes[0]) << 24 | UInt32(bytes[1]) << 16
                             | UInt32(bytes[2]) << 8 | UInt32(bytes[3])
                     } ?? 0
-                    return (valueBlockID: valueID, keyID: inline)
+                    return (key: inline, value: entry.value)
                 },
-                blockSize: 1024, isInternal: true, trailer: Data()))
+                valueBlockIDs: bitmapValueIDs.map { $0 },
+                blockSize: 1024))
             for entry in bitmapData {
                 bom.addBlock(entry.value)
             }
