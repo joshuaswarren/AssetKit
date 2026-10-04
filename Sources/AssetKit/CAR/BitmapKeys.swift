@@ -57,30 +57,33 @@ enum BitmapKeys {
         }
 
         func encode() -> Data {
+            // Single-size appicons: exact 52-byte descriptor from the
+            // actool 27.0 democar2 oracle.
+            if kind == .appIconSingleSize {
+                var w = ByteWriter()
+                for v: UInt32 in [1, 0, 0x28, 9, 0xFFFFFFFF, 1, 0x02, 2, 1, 3,
+                                  0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF] {
+                    w.writeLE(v)
+                }
+                precondition(w.offset == 52)
+                return w.data
+            }
+            // All other kinds: generic 52-byte (icon/image/vector) or
+            // 48-byte (color) descriptor.
             var w = ByteWriter()
             w.writeLE(UInt32(1))
             w.writeLE(UInt32(0))
-            // Slots 3/4 are length fields: 0x28/9 for 52-byte descriptors
-            // (icon/image/vector), 0x24/8 for 48-byte color descriptors.
-            w.writeLE(UInt32(kind == .color ? 0x24 : 0x28))
-            w.writeLE(UInt32(kind == .color ? 8 : 9))
+            let hdrSize: UInt32 = kind == .color ? 0x24 : 0x28
+            let keyLen: UInt32 = kind == .color ? 8 : 9
+            w.writeLE(hdrSize)
+            w.writeLE(keyLen)
             w.writeLE(UInt32(0xFFFFFFFF))
             w.writeLE(UInt32(1))
             w.writeLE(assetKindMarker)
-            // Variable section. Values come from the actool reference.
-            //   AppIcon  : [u32=2, u16=1, u16=1, u32=7]
-            //   Image    : [u32=1, u16=1, u16=0, u32=1]
-            //   Vector   : [u32=1, u16=1, u16=0, u32=1]   (same shape as Image)
-            //   Color    : [u32=1, u16=1, u16=0]          (no trailing u32)
-            //   SingleSz : [u32=1, u32=3]                 (no u16 pair)
-            // The exact semantics aren't fully reverse-engineered yet, so for
-            // v1 we hardcode the templates per kind and pass through the
-            // discovered (idiom, subtype) count. Field 7 in particular seems
-            // to track that count.
-            w.writeLE(countOverride ?? idiomSubtypeCount)
+            w.writeLE(idiomSubtypeCount)
             switch kind {
             case .appIcon:
-                w.writeLE(UInt16(1))            // (u16, u16) tuple
+                w.writeLE(UInt16(1))
                 w.writeLE(UInt16(1))
                 w.writeLE(UInt32(7))
             case .image, .vector:
@@ -88,23 +91,19 @@ enum BitmapKeys {
                 w.writeLE(UInt16(0))
                 w.writeLE(UInt32(1))
             case .color:
-                // Colorsets end the variable section after the (u16, u16)
-                // pair — no trailing u32 (48-byte descriptor, actool 27.0
-                // per-space oracle).
                 w.writeLE(UInt16(1))
                 w.writeLE(UInt16(0))
             case .appIconSingleSize:
-                // Single-size appicons end the variable section with a u32 3
-                // — 48-byte descriptor (democar2 oracle).
-                w.writeLE(UInt32(3))
+                break
             }
-            // Three trailing -1 sentinels for every kind.
-            w.writeLE(UInt32(0xFFFFFFFF))
-            w.writeLE(UInt32(0xFFFFFFFF))
-            w.writeLE(UInt32(0xFFFFFFFF))
+            let sentinels = kind == .color ? 3 : 3
+            for _ in 0..<sentinels {
+                w.writeLE(UInt32(0xFFFFFFFF))
+            }
+            let expectedSize = kind == .color ? 48 : 52
             precondition(
-                w.offset == (kind == .color || kind == .appIconSingleSize ? 48 : 52),
-                "BITMAPKEYS descriptor must be \(kind == .color || kind == .appIconSingleSize ? 48 : 52) bytes; got \(w.offset)")
+                w.offset == expectedSize,
+                "BITMAPKEYS descriptor must be \(expectedSize) bytes; got \(w.offset)")
             return w.data
         }
     }

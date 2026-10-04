@@ -21,8 +21,13 @@ struct BOMWriterTests {
         let varsOff = readU32BE(data, 0x18)
         #expect(indexOff > 0)
         #expect(varsOff > 0)
-        // actool 27.0 places vars before index
-        #expect(varsOff < indexOff)
+        // actool 27.0 places the index before the vars table, with a
+        // 4-byte zero gap between them; indexLength spans to EOF.
+        #expect(indexOff < varsOff)
+        let indexLen = readU32BE(data, 0x14)
+        let varsLen = readU32BE(data, 0x1C)
+        #expect(indexOff + indexLen == data.count)
+        #expect(varsOff + varsLen == data.count)
     }
 
     @Test("Tree round-trip: parse our own output structurally")
