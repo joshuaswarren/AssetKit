@@ -20,7 +20,9 @@ struct BOMWriterTests {
         let indexOff = readU32BE(data, 0x10)
         let varsOff = readU32BE(data, 0x18)
         #expect(indexOff > 0)
-        #expect(varsOff > indexOff)
+        #expect(varsOff > 0)
+        // actool 27.0 places vars before index
+        #expect(varsOff < indexOff)
     }
 
     @Test("Tree round-trip: parse our own output structurally")

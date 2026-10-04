@@ -1,17 +1,15 @@
 import Foundation
 
-/// Writes a BOM (Bill of Materials) container.
+/// Writes a BOM (Bill of Materials) container in actool 27.0's layout.
 ///
-/// Format derived from the public BOM headers (libbom) and reverse engineering
-/// in https://blog.timac.org/2018/1018-reverse-engineering-the-car-file-format/
-/// and https://dbg.re/posts/car-file-format/.
-///
-/// Container layout, big-endian throughout:
-/// - 32-byte header at offset 0
+/// Container layout (verified byte-level against Apple's output):
+/// - 512-byte header at offset 0
 /// - Block payloads packed sequentially
-/// - Block index table at `indexOffset`: `count u32` then `(addr u32, len u32)` pairs (block 0 is null).
-///   actool 27.0 pads the index to 256 entries with zero-length entries; we match.
-/// - Variables table at `varsOffset`: `count u32` then per-entry `{ blockID u32, nameLen u8, name[nameLen] }`
+/// - Zero padding to 16-byte boundary
+/// - Vars table (count u32-BE, then {blockID u32-BE, nameLen u8, name} per entry)
+/// - Zero padding to 16-byte boundary
+/// - Block index table (count u32-BE = 256, then {addr u32-BE, len u32-BE} per entry,
+///   entry 0 reserved null, unused entries zero-length), padded to 256 entries
 struct BOMWriter {
     struct Block {
         var data: Data
@@ -50,43 +48,29 @@ struct BOMWriter {
         // Header placeholder; we patch addresses after we know payload size.
         writer.write(Array("BOMStore".utf8)) // 0x00: magic (8 bytes)
         writer.writeBE(UInt32(1))            // 0x08: version
-        // actool 27.0 counts only the real blocks (ids 1..n); the null entry
-        // 0 is present in the index but not counted.
-        writer.writeBE(UInt32(blocks.count - 1)) // 0x0C: numberOfBlocks
+        writer.writeBE(UInt32(UInt32(blocks.count - 1))) // 0x0C: numberOfBlocks (real, excl. null entry 0)
         writer.writeBE(UInt32(0))            // 0x10: indexOffset (patched)
         writer.writeBE(UInt32(0))            // 0x14: indexLength (patched)
         writer.writeBE(UInt32(0))            // 0x18: varsOffset (patched)
         writer.writeBE(UInt32(0))            // 0x1C: varsLength (patched)
-        // BOM headers are 512 bytes in some references; pad to be safe so block payloads
-        // never overlap with the header.
+        // BOM headers are 512 bytes; pad so block data starts at offset 512.
         writer.writeZeros(512 - writer.offset)
 
-        var blockOffsets: [UInt32] = [0] // block 0 is null
+        // Blocks sequentially.
+        var blockOffsets: [UInt32] = [0] // block 0 is reserved/null
         for block in blocks.dropFirst() {
             blockOffsets.append(UInt32(writer.offset))
             writer.write(block.data)
         }
 
-        let indexOffset = UInt32(writer.offset)
-        // The index table count is the table CAPACITY (actool 27.0: 256
-        // entries, unused tail zero-length), not the real block count.
-        let capacity = max(Self.indexCapacity, ((blocks.count + 255) / 256) * 256)
-        writer.writeBE(UInt32(capacity))
-        for (i, block) in blocks.enumerated() {
-            let addr = i == 0 ? UInt32(0) : blockOffsets[i]
-            let len = UInt32(block.data.count)
-            writer.writeBE(addr)
-            writer.writeBE(len)
+        // actool 27.0 aligns the vars table and the index table to 16-byte
+        // boundaries, placing vars before index.
+        func padTo16() {
+            let rem = writer.offset % 16
+            if rem != 0 { writer.writeZeros(16 - rem) }
         }
-        let padding = capacity - blocks.count
-        if padding > 0 {
-            for _ in 0..<padding {
-                writer.writeBE(UInt32(0))
-                writer.writeBE(UInt32(0))
-            }
-        }
-        let indexLength = UInt32(writer.offset) - indexOffset
 
+        padTo16()
         let varsOffset = UInt32(writer.offset)
         writer.writeBE(UInt32(variables.count))
         for v in variables {
@@ -97,6 +81,20 @@ struct BOMWriter {
             writer.write(nameBytes)
         }
         let varsLength = UInt32(writer.offset) - varsOffset
+
+        padTo16()
+        let indexOffset = UInt32(writer.offset)
+        // actool counts the index TABLE capacity (256 entries) not the real
+        // block count.
+        let indexCount = max(Self.indexCapacity, blocks.count)
+        writer.writeBE(UInt32(indexCount))
+        for (i, block) in blocks.enumerated() {
+            let addr = i == 0 ? UInt32(0) : blockOffsets[i]
+            let len = UInt32(block.data.count)
+            writer.writeBE(addr)
+            writer.writeBE(len)
+        }
+        let indexLength = UInt32(writer.offset) - indexOffset
 
         writer.patchBE(indexOffset, at: 0x10)
         writer.patchBE(indexLength, at: 0x14)
