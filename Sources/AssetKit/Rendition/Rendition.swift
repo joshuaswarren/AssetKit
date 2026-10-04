@@ -5,6 +5,7 @@ struct Rendition: Sendable {
         case bitmap(BitmapBody)
         case color(ColorBody)
         case preservedSource(PreservedSourceBody)
+        case multiSized(MultiSizedBody)
     }
 
     var name: String
@@ -12,7 +13,31 @@ struct Rendition: Sendable {
     var scale: Scale?
     var appearance: Appearance?
     var gamut: Gamut?
+    /// Raw rendition-key subtype token. Non-zero only for icon variants
+    /// keyed on a device trait — actool keys the 90 pt large-phone home icon
+    /// (derived from the 60 pt @3x slot) at subtype 1792.
+    var subtype: UInt16? = nil
+    /// App-icon "Icon Index": the rank of this rendition's point size among
+    /// the appiconset's distinct point sizes, ascending. Only icon renditions
+    /// carry it; assetutil surfaces it as "Icon Index".
+    var iconIndex: UInt16? = nil
     var body: Body
+}
+
+/// Body of a MultiSized icon rendition (CSI layout 1010, 'MSIS' payload).
+/// actool emits one per (idiom, subtype) group of icon renditions; each
+/// entry maps a point size to the Icon Index of the bitmap rendition that
+/// satisfies it. Widths/heights are point sizes (83.5 pt truncates to 83,
+/// as in the reference output).
+struct MultiSizedBody: Sendable {
+    struct Size: Sendable {
+        var pointWidth: UInt32
+        var pointHeight: UInt32
+        var iconIndex: UInt32
+    }
+
+    /// One entry per distinct point size, ascending.
+    var sizes: [Size]
 }
 
 struct BitmapBody: Sendable {

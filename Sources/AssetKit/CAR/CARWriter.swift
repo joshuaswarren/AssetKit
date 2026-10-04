@@ -79,6 +79,8 @@ struct CARWriter: Sendable {
         case .bitmap(let body):
             let scaleFactor = UInt32(rendition.scale?.factor ?? 1) * 100
             return CSIWriter.bitmap(name: rendition.name, body: body, scaleFactor: scaleFactor)
+        case .multiSized(let body):
+            return CSIWriter.multiSized(name: rendition.name, body: body)
         case .color(let body):
             return CSIWriter.color(name: rendition.name, body: body)
         case .preservedSource(let body):
