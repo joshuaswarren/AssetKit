@@ -24,6 +24,11 @@ enum BitmapKeys {
         var kind: Kind
         /// Number of distinct (idiom, subtype) tuples this asset is keyed on.
         var idiomSubtypeCount: UInt32
+        /// Overrides the count slot for the single-size appicon shape.
+        var countOverride: UInt32? = nil
+        /// Overrides the count slot for single-size appicons, where actool
+        /// writes the RENDITION count (2: bitmap + multisized container).
+        var countOverride: UInt32? = nil
 
         enum Kind {
             case appIcon
@@ -35,17 +40,22 @@ enum BitmapKeys {
             /// colorset too (marker 0x02, variable section shaped like the
             /// image one).
             case color
+            /// Single-size (1024 universal) `.appiconset` — the Icon
+            /// Composer / Xcode 14+ form. actool 27.0 emits a 48-byte
+            /// descriptor with marker 0x02 and a shorter variable section
+            /// (verified against the democar2 oracle).
+            case appIconSingleSize
         }
 
         /// Slot 6 of the header (the only header u32 that varies by kind).
-        /// `0x04` for bitmap-source assets (PNG, JPG); `0x0e` for vector
-        /// sources (SVG) and appicons; `0x02` for colors (actool 27.0
-        /// per-space oracle).
+        /// `0x04` for bitmap-source assets (PNG, JPG); `0x0e` for classic
+        /// appicons and vector sources; `0x02` for single-size appicons and
+        /// colors (actool 27.0 oracles).
         private var assetKindMarker: UInt32 {
             switch kind {
             case .image: return 0x04
             case .vector, .appIcon: return 0x0e
-            case .color: return 0x02
+            case .appIconSingleSize, .color: return 0x02
             }
         }
 
@@ -64,12 +74,13 @@ enum BitmapKeys {
             //   AppIcon  : [u32=2, u16=1, u16=1, u32=7]
             //   Image    : [u32=1, u16=1, u16=0, u32=1]
             //   Vector   : [u32=1, u16=1, u16=0, u32=1]   (same shape as Image)
-            //   Color    : [u32=1, u16=1, u16=0, u32=1]   (same shape as Image)
+            //   Color    : [u32=1, u16=1, u16=0]          (no trailing u32)
+            //   SingleSz : [u32=1, u32=3]                 (no u16 pair)
             // The exact semantics aren't fully reverse-engineered yet, so for
             // v1 we hardcode the templates per kind and pass through the
             // discovered (idiom, subtype) count. Field 7 in particular seems
             // to track that count.
-            w.writeLE(idiomSubtypeCount)
+            w.writeLE(countOverride ?? idiomSubtypeCount)
             switch kind {
             case .appIcon:
                 w.writeLE(UInt16(1))            // (u16, u16) tuple
@@ -85,14 +96,18 @@ enum BitmapKeys {
                 // per-space oracle).
                 w.writeLE(UInt16(1))
                 w.writeLE(UInt16(0))
+            case .appIconSingleSize:
+                // Single-size appicons end the variable section with a u32 3
+                // — 48-byte descriptor (democar2 oracle).
+                w.writeLE(UInt32(3))
             }
             // Three trailing -1 sentinels for every kind.
             w.writeLE(UInt32(0xFFFFFFFF))
             w.writeLE(UInt32(0xFFFFFFFF))
             w.writeLE(UInt32(0xFFFFFFFF))
             precondition(
-                w.offset == (kind == .color ? 48 : 52),
-                "BITMAPKEYS descriptor must be \(kind == .color ? 48 : 52) bytes; got \(w.offset)")
+                w.offset == (kind == .color || kind == .appIconSingleSize ? 48 : 52),
+                "BITMAPKEYS descriptor must be \(kind == .color || kind == .appIconSingleSize ? 48 : 52) bytes; got \(w.offset)")
             return w.data
         }
     }
@@ -125,6 +140,24 @@ enum BitmapKeys {
         guard hasDescribableRendition else { return nil }
 
         let kind = inferKind(from: renditions)
+        // Single-size appicon shape (Icon Composer / Xcode 14+): exactly one
+        // bitmap + one MultiSized container (2 renditions total). actool
+        // 27.0 emits a shorter descriptor with marker 0x02 for this form.
+        var countOverride: UInt32? = nil
+        var effectiveKind = kind
+        if kind == .appIcon, renditions.count == 2,
+           renditions.contains({ if case .multiSized = $0.body { return true }; return false }) {
+            effectiveKind = .appIconSingleSize
+            countOverride = 2
+        }
+        // Single-size appicons (Icon Composer / Xcode 14+ form): exactly one
+        // bitmap + one MultiSized container. actool writes the RENDITION
+        // count (2) into the descriptor's count slot for this shape.
+        let isSingleSizeIcon = kind == .appIcon
+            && renditions.contains { if case .multiSized = $0.body { return true }; return false }
+        if isSingleSizeIcon {
+            return Descriptor(kind: .appIconSingleSize, idiomSubtypeCount: 1, countOverride: UInt32(renditions.count))
+        }
 
         // (idiom << 16) | subtype packs each (idiom, subtype) pair into a
         // single UInt32 for Set uniqueness. Subtype is always 0 today; the
@@ -136,7 +169,8 @@ enum BitmapKeys {
             return (idiom << 16) | subtype
         })
 
-        return Descriptor(kind: kind, idiomSubtypeCount: UInt32(idiomSubtypes.count))
+        return Descriptor(kind: effectiveKind, idiomSubtypeCount: UInt32(idiomSubtypes.count),
+                          countOverride: countOverride)
     }
 
     /// AppIcon takes precedence over Vector takes precedence over Image:
