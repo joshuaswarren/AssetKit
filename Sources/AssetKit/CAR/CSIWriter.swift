@@ -177,8 +177,9 @@ enum CSIWriter {
         if let name = body.systemName {
             w.writeLE(UInt32(0x102))            // gray gamma 2.2, as actool writes it
             w.writeLE(UInt32(2))
-            w.writeLE(body.red.bitPattern)
-            w.writeLE(body.alpha.bitPattern)
+            for component in body.components {
+                w.writeLE(component.bitPattern)
+            }
             w.writeLE(UInt32(0x434F_4C52))
             w.writeLE(UInt32(1))
             w.writeLE(UInt32(name.utf8.count))
@@ -186,9 +187,11 @@ enum CSIWriter {
             return w.data
         }
         w.writeLE(UInt32(body.colorSpaceID))    // colorSpaceID with flag bits
-        w.writeLE(UInt32(4))                    // numberOfComponents
-        for component in [body.red, body.green, body.blue, body.alpha] {
-            w.writeLE(component.bitPattern)
+        w.writeLE(UInt32(body.components.count))
+        for component in body.components {
+            // actool quantizes each component to Float32 before storing it
+            // in the Float64 slot (Xcode 27.0 writes 1.1 as 0x3FF19999A0000000).
+            w.writeLE(Double(Float(component)).bitPattern)
         }
         return w.data
     }

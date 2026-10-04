@@ -62,7 +62,7 @@ struct CSIWriterTests {
             0, 0, 0, 0, 0, 0, 0xF0, 0x3F, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xF0, 0x3F,
         ]
-        let body = ColorBody(red: 1, green: 0, blue: 0, alpha: 1, colorSpaceID: 1)
+        let body = ColorBody(components: [1, 0, 0, 1], colorSpaceID: 1)
         let data = [UInt8](CSIWriter.color(name: "Dot", body: body))
         #expect(Array(data[184..<(184 + 28)]) == referenceTVL)
         #expect(Array(data[(184 + 28)...]) == referenceBody)
@@ -79,7 +79,7 @@ struct CSIWriterTests {
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xF0, 0x3F,
             0x52, 0x4C, 0x4F, 0x43, 1, 0, 0, 0, 10, 0, 0, 0,
         ] + Array("labelColor".utf8)
-        let body = ColorBody(red: 0, green: 0, blue: 0, alpha: 1, colorSpaceID: 1, systemName: "labelColor")
+        let body = ColorBody(components: [0, 1], colorSpaceID: 1, systemName: "labelColor")
         let data = [UInt8](CSIWriter.color(name: "label", body: body))
         #expect(Array(data[(184 + 28)...]) == referenceBody)
     }
