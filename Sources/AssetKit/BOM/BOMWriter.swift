@@ -88,9 +88,9 @@ struct BOMWriter {
         // block count.
         let indexCount = max(Self.indexCapacity, blocks.count)
         writer.writeBE(UInt32(indexCount))
-        for (i, block) in blocks.enumerated() {
-            let addr = i == 0 ? UInt32(0) : blockOffsets[i]
-            let len = UInt32(block.data.count)
+        for i in 0..<indexCount {
+            let addr = i < blocks.count ? (i == 0 ? UInt32(0) : blockOffsets[i]) : 0
+            let len = i < blocks.count ? UInt32(blocks[i].data.count) : 0
             writer.writeBE(addr)
             writer.writeBE(len)
         }
