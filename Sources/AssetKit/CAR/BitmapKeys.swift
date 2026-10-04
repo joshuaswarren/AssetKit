@@ -26,9 +26,6 @@ enum BitmapKeys {
         var idiomSubtypeCount: UInt32
         /// Overrides the count slot for the single-size appicon shape.
         var countOverride: UInt32? = nil
-        /// Overrides the count slot for single-size appicons, where actool
-        /// writes the RENDITION count (2: bitmap + multisized container).
-        var countOverride: UInt32? = nil
 
         enum Kind {
             case appIcon
@@ -132,45 +129,30 @@ enum BitmapKeys {
         let hasDescribableRendition = renditions.contains { rendition in
             switch rendition.body {
             case .bitmap, .preservedSource, .color: return true
-            // MultiSized containers only ever accompany bitmap icon
-            // renditions; they alone never justify a BITMAPKEYS row.
             case .multiSized: return false
             }
         }
         guard hasDescribableRendition else { return nil }
 
         let kind = inferKind(from: renditions)
-        // Single-size appicon shape (Icon Composer / Xcode 14+): exactly one
-        // bitmap + one MultiSized container (2 renditions total). actool
-        // 27.0 emits a shorter descriptor with marker 0x02 for this form.
         var countOverride: UInt32? = nil
         var effectiveKind = kind
         if kind == .appIcon, renditions.count == 2,
-           renditions.contains({ if case .multiSized = $0.body { return true }; return false }) {
+           renditions.contains(where: { if case .multiSized = $0.body { return true }; return false }) {
             effectiveKind = .appIconSingleSize
-            countOverride = 2
-        }
-        // Single-size appicons (Icon Composer / Xcode 14+ form): exactly one
-        // bitmap + one MultiSized container. actool writes the RENDITION
-        // count (2) into the descriptor's count slot for this shape.
-        let isSingleSizeIcon = kind == .appIcon
-            && renditions.contains { if case .multiSized = $0.body { return true }; return false }
-        if isSingleSizeIcon {
-            return Descriptor(kind: .appIconSingleSize, idiomSubtypeCount: 1, countOverride: UInt32(renditions.count))
+            countOverride = UInt32(renditions.count)
         }
 
-        // (idiom << 16) | subtype packs each (idiom, subtype) pair into a
-        // single UInt32 for Set uniqueness. Subtype is always 0 today; the
-        // packing exists to match how CoreUI would distinguish (e.g.) iPhone
-        // 60pt vs iPhone 76pt if subtype were ever non-zero.
         let idiomSubtypes = Set(renditions.map { rendition -> UInt32 in
             let idiom = UInt32(rendition.idiom.rawValueByte)
-            let subtype: UInt32 = 0
+            let subtype = UInt32(rendition.subtype ?? 0)
             return (idiom << 16) | subtype
         })
 
-        return Descriptor(kind: effectiveKind, idiomSubtypeCount: UInt32(idiomSubtypes.count),
-                          countOverride: countOverride)
+        return Descriptor(
+            kind: effectiveKind,
+            idiomSubtypeCount: UInt32(idiomSubtypes.count),
+            countOverride: countOverride)
     }
 
     /// AppIcon takes precedence over Vector takes precedence over Image:
