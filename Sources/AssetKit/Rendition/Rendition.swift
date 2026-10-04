@@ -72,13 +72,17 @@ struct BitmapBody: Sendable {
 }
 
 struct ColorBody: Sendable {
-    var red: Double
-    var green: Double
-    var blue: Double
-    var alpha: Double
+    /// Components in the color space's own order — RGB spaces carry 4
+    /// (r, g, b, a), gray spaces carry 2 (white, alpha). actool quantizes
+    /// each to Float32 before storing it in the COLR body's Float64 slots
+    /// (verified: Xcode 27.0 writes 1.1 as 0x3FF19999A0000000).
+    var components: [Double]
+    /// COLR colorspace ID. actool 27.0 maps: srgb 1, gray-gamma-22 2,
+    /// display-p3 3, extended-srgb 4, extended-linear-srgb 5, extended-gray 6;
+    /// the gray fallback for system colors carries 0x102.
     var colorSpaceID: UInt8
-    /// System color name ("labelColor"). The RGBA fields then hold a gray
-    /// fallback (red == green == blue) for runtimes that cannot resolve it.
+    /// System color name ("labelColor"). The components then hold a gray
+    /// fallback for runtimes that cannot resolve it.
     var systemName: String? = nil
 }
 

@@ -169,7 +169,7 @@ struct AppIconIconIndexTests {
             key(scale: 1, idiom: 2, subtype: 0, dimension2: 0, part: 218), // pad
             key(scale: 1, idiom: 6, subtype: 0, dimension2: 0, part: 218), // marketing
         ]
-        let actualKeys = renditions.map { RenditionKey(rendition: $0).encode() }
+        let actualKeys = renditions.map { RenditionKey(rendition: $0).encode(format: v1KeyFormat) }
         for expected in expectedKeys {
             #expect(actualKeys.contains(expected), "missing rendition key \(Array(expected))")
         }

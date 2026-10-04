@@ -29,6 +29,9 @@ struct RenditionKey: Hashable, Sendable {
     enum Part: UInt16 {
         /// Used by SpringBoard's icon-render pipeline (`.appiconset`).
         case appIcon = 220
+        /// Named colors (`.colorset`). actool keys every color rendition —
+        /// system references included — at element 85 / part 217.
+        case color = 217
         /// MultiSized icon container (CSI layout 1010, 'MSIS' body). actool
         /// emits one per (idiom, subtype) group of icon renditions; CoreUI
         /// resolves an icon request's point size through it.
@@ -70,8 +73,8 @@ struct RenditionKey: Hashable, Sendable {
             self.part = Part.multiSized.rawValue
             self.dimension2 = 0
         case .color:
-            self.element = 0
-            self.part = 0
+            self.element = Element.bitmap.rawValue
+            self.part = Part.color.rawValue
             self.dimension2 = 0
             // actool keys named colors at scale 1 (assetutil: "Scale": 1).
             self.scale = 1
@@ -115,20 +118,31 @@ struct RenditionKey: Hashable, Sendable {
         self.part = part
     }
 
-    func encode() -> Data {
+    /// Packs the key as little-endian UInt16 tokens, one per attribute in
+    /// `format` (the catalog's KEYFORMAT). Token count = format count: a
+    /// color-only catalog's 8-attribute format yields 16-byte keys, an
+    /// icon catalog's 9-attribute format yields 18-byte keys, matching
+    /// actool 27.0.
+    func encode(format: [AttributeID]) -> Data {
         var w = ByteWriter()
-        w.writeLE(appearance)
-        w.writeLE(localization)
-        w.writeLE(scale)
-        w.writeLE(idiom)
-        w.writeLE(subtype)
-        w.writeLE(dimension2)
-        w.writeLE(identifier)
-        w.writeLE(element)
-        w.writeLE(part)
+        for attribute in format {
+            switch attribute {
+            case .appearance: w.writeLE(appearance)
+            case .localization: w.writeLE(localization)
+            case .scale: w.writeLE(scale)
+            case .idiom: w.writeLE(idiom)
+            case .subtype: w.writeLE(subtype)
+            case .dimension2: w.writeLE(dimension2)
+            case .identifier: w.writeLE(identifier)
+            case .element: w.writeLE(element)
+            case .part: w.writeLE(part)
+            }
+        }
         return w.data
     }
 
+    /// Decodes a key packed in `v1KeyFormat` order. Returns nil for other
+    /// formats (token count and positions differ).
     static func decode(_ data: Data) -> RenditionKey? {
         guard data.count == 18 else { return nil }
         func u16(_ offset: Int) -> UInt16 {
