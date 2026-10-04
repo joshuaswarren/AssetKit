@@ -101,7 +101,9 @@ enum BitmapKeys {
         let hasBitmapOrPreservedSource = renditions.contains { rendition in
             switch rendition.body {
             case .bitmap, .preservedSource: return true
-            case .color: return false
+            // MultiSized containers only ever accompany bitmap icon
+            // renditions; they alone never justify a BITMAPKEYS row.
+            case .color, .multiSized: return false
             }
         }
         guard hasBitmapOrPreservedSource else { return nil }

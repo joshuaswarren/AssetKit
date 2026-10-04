@@ -112,6 +112,39 @@ enum CSIWriter {
         return header + tvl + envelope
     }
 
+    /// MultiSized icon container (layout 1010). Header dimensions, scale,
+    /// pixelFormat and colorSpace are all zero like named colors; TVL is the
+    /// same all-zero 1004 + 1006:1 pair. The name is the ASSET name (not a
+    /// source filename), and the body lists point sizes — 83.5 pt truncates
+    /// to 83, as in the reference output.
+    static func multiSized(name: String, body: MultiSizedBody) -> Data {
+        let tvl = CSITVL.encode([.colorSlice, .bitmapFlag])
+        var w = ByteWriter()
+        w.writeLE(UInt32(0x4D53_4953))          // 'MSIS' (file bytes SISM)
+        w.writeLE(UInt32(1))                    // version
+        w.writeLE(UInt32(body.sizes.count))
+        for size in body.sizes {
+            w.writeLE(size.pointWidth)
+            w.writeLE(size.pointHeight)
+            w.writeLE(size.iconIndex)
+        }
+        let payload = w.data
+        let header = CSIHeader.encode(
+            renditionFlags: 0,
+            width: 0,
+            height: 0,
+            scaleFactor: 0,
+            pixelFormat: 0,
+            colorSpace: 0,
+            layout: .multiSized,
+            name: name,
+            tvlLength: UInt32(tvl.count),
+            bitmapCount: 1,
+            renditionLength: UInt32(payload.count)
+        )
+        return header + tvl + payload
+    }
+
     /// Named color, in the layout actool 27.0 writes: header scale, colorSpace
     /// and pixelFormat all zero; TVL (1004: zeros, 1006: 1); one body.
     static func color(name: String, body: ColorBody) -> Data {
