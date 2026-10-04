@@ -14,11 +14,11 @@ enum CARHeaderBlock {
     /// CoreUI metadata strings written for actool-compatible Assets.car.
     /// Both fields are opaque to CoreUI's binary parser (it walks them as
     /// fixed-size buffers), but they surface in `assetutil --info`
-    /// ("MainVersion" / "AssetStorageVersion") and in App Store processing,
-    /// which rejected a car whose CoreUI version did not match the storage
-    /// layout (90562). Values are actool 27.0's, byte-identical.
+    /// ("MainVersion" / "AssetStorageVersion"). `mainVersionString` records
+    /// the structural format version (CoreUI 1010 layout); the version
+    /// string is a true claim about the writing tool.
     static let defaultMainVersionString = "@(#)PROGRAM:CoreUI  PROJECT:CoreUI-1010 [LAR]"
-    static let defaultVersionString = "Xcode 27.0 (27A266a) via AssetCatalogAgent-AssetRuntime"
+    static let defaultVersionString = "omarchy-apple-dev actool (AssetKit)"
 
     static func data(
         coreuiVersion: UInt32 = 1010,

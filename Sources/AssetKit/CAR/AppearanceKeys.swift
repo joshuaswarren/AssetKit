@@ -1,7 +1,7 @@
 import Foundation
 
-/// APPEARANCEKEYS tree: maps appearance name strings to UInt16 IDs that match
-/// the `appearance` attribute values appearing in rendition keys.
+/// APPEARANCEKEYS tree rows: maps appearance name strings to the UInt16 ids
+/// that rendition keys carry in their `appearance` attribute.
 ///
 /// CoreUI's runtime walks this tree by exact name-string match to resolve
 /// the appearance slot in a rendition key. Every numeric ID that can appear

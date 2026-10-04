@@ -24,55 +24,48 @@ struct BOMWriterTests {
 
     @Test("Tree round-trip: parse our own output structurally")
     func treeRoundTrip() {
-        var bom = BOMWriter()
         let entries: [BOMTree.Entry] = [
             .init(key: Data("alpha".utf8), value: Data([0x01])),
             .init(key: Data("bravo".utf8), value: Data([0x02])),
             .init(key: Data("charlie".utf8), value: Data([0x03])),
         ]
-        let treeBlockID = BOMTree.insert(into: &bom, entries: entries)
-        bom.setVariable("TREE", blockID: treeBlockID)
-        let data = bom.finalize()
-
-        // Find the tree header block via the variables table
-        let varsOff = Int(readU32BE(data, 0x18))
-        let varsCount = Int(readU32BE(data, varsOff))
-        var cursor = varsOff + 4
-        var treeID: UInt32 = 0
-        for _ in 0..<varsCount {
-            let blockID = readU32BE(data, cursor)
-            cursor += 4
-            let nameLen = Int(data[data.index(data.startIndex, offsetBy: cursor)])
-            cursor += 1
-            let nameRange = cursor..<(cursor + nameLen)
-            let name = String(decoding: data[nameRange.lowerBound..<nameRange.upperBound], as: UTF8.self)
-            cursor += nameLen
-            if name == "TREE" {
-                treeID = blockID
-            }
+        let sorted = entries.sorted { BOMTree.byteCompare($0.key, $1.key) < 0 }
+        var dataIDs: [(UInt32, UInt32)] = []
+        var next: UInt32 = 1
+        for _ in sorted {
+            dataIDs.append((next, next + 1))
+            next += 2
         }
-        #expect(treeID != 0)
+        let trailer = sorted.reduce(Data()) { $0 + $1.key }
+        let leafData = BOMTree.leaf(
+            entries: sorted.enumerated().map { (index, entry) in
+                (valueBlockID: dataIDs[index].1, key: dataIDs[index].0)
+            },
+            blockSize: BOMTree.defaultBlockSize, isInternal: false, trailer: trailer)
+        let headerData = BOMTree.header(
+            leafBlockID: next, blockSize: BOMTree.defaultBlockSize,
+            pathCount: sorted.count, isInternal: false, keyTrailerLength: trailer.count)
 
-        // Parse block index to find the tree header block bytes
-        let indexOff = Int(readU32BE(data, 0x10))
-        let blockCount = Int(readU32BE(data, indexOff))
-        var blocks: [(Int, Int)] = []
-        for i in 0..<blockCount {
-            let addr = Int(readU32BE(data, indexOff + 4 + i * 8))
-            let len = Int(readU32BE(data, indexOff + 4 + i * 8 + 4))
-            blocks.append((addr, len))
-        }
-        let (treeAddr, treeLen) = blocks[Int(treeID)]
-        #expect(treeLen >= 21)
-        let treeMagic = readU32BE(data, treeAddr)
-        #expect(treeMagic == BOMTree.treeMagic)
-        let leafBlockID = Int(readU32BE(data, treeAddr + 8))
-        let (leafAddr, _) = blocks[leafBlockID]
-        // leaf header: isLeaf u16, count u16
-        let isLeaf = readU16BE(data, leafAddr)
-        let count = readU16BE(data, leafAddr + 2)
+        // Parse the leaf structurally.
+        let leafBytes = [UInt8](leafData)
+        let isLeaf = Int(leafBytes[0]) << 8 | Int(leafBytes[1])
+        let count = Int(leafBytes[2]) << 8 | Int(leafBytes[3])
         #expect(isLeaf == 1)
         #expect(count == 3)
+        // Padding to blockSize, then the key trailer.
+        #expect(leafBytes.count == Int(BOMTree.defaultBlockSize) + trailer.count)
+        #expect(Array(leafBytes[Int(BOMTree.defaultBlockSize)...]) == Array(trailer))
+
+        // Parse the header structurally.
+        let headerBytes = [UInt8](headerData)
+        let magic = headerBytes.prefix(4)
+        #expect(Array(magic) == Array("tree".utf8))
+        let childBlock = Int(headerBytes[8]) << 24 | Int(headerBytes[9]) << 16
+            | Int(headerBytes[10]) << 8 | Int(headerBytes[11])
+        #expect(childBlock == next)
+        let trailerLen = Int(headerBytes[21]) << 24 | Int(headerBytes[22]) << 16
+            | Int(headerBytes[23]) << 8 | Int(headerBytes[24])
+        #expect(trailerLen == trailer.count)
     }
 
     private func readU32BE(_ data: Data, _ offset: Int) -> UInt32 {

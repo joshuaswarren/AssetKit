@@ -16,10 +16,9 @@ import Foundation
 /// platform match recorded here.
 enum ExtendedMetadata {
     static let defaultPlatform = "ios"
-    /// actool 27.0's authoring string, byte-identical (surfaces as
-    /// "Authoring Tool" in `assetutil --info`; App Store processing rejected
-    /// a car with a non-Apple value, 90562).
-    static let defaultAuthoringTool = "@(#)PROGRAM:CoreThemeDefinition  PROJECT:CoreThemeDefinition-664 [LAR] [IIO-2851][LAR] AppleJPEG[1][32]  CMPhoto[1][219]] [IR-120(hw)]"
+    /// Surfaces as "Authoring Tool" in `assetutil --info`. True claim about
+    /// the writing tool.
+    static let defaultAuthoringTool = "omarchy-apple-dev actool (AssetKit)"
 
     static func data(
         deploymentTarget: String,

@@ -9,7 +9,8 @@ import Foundation
 /// Container layout, big-endian throughout:
 /// - 32-byte header at offset 0
 /// - Block payloads packed sequentially
-/// - Block index table at `indexOffset`: `count u32` then `(addr u32, len u32)` pairs (block 0 is null)
+/// - Block index table at `indexOffset`: `count u32` then `(addr u32, len u32)` pairs (block 0 is null).
+///   actool 27.0 pads the index to 256 entries with zero-length entries; we match.
 /// - Variables table at `varsOffset`: `count u32` then per-entry `{ blockID u32, nameLen u8, name[nameLen] }`
 struct BOMWriter {
     struct Block {
@@ -20,6 +21,10 @@ struct BOMWriter {
         var name: String
         var blockID: UInt32
     }
+
+    /// actool 27.0 writes a fixed-capacity block index: 256 entries, unused
+    /// tail entries zero-length. Larger catalogs grow in 256-entry steps.
+    static let indexCapacity = 256
 
     private var blocks: [Block] = []
     private var variables: [Variable] = []
@@ -61,12 +66,22 @@ struct BOMWriter {
         }
 
         let indexOffset = UInt32(writer.offset)
+        // Header numberOfBlocks counts real blocks; the index table itself is
+        // padded to the fixed capacity actool writes (256 entries) with
+        // zero-length entries so the container shape matches the reference.
         writer.writeBE(UInt32(blocks.count))
         for (i, block) in blocks.enumerated() {
             let addr = i == 0 ? UInt32(0) : blockOffsets[i]
             let len = UInt32(block.data.count)
             writer.writeBE(addr)
             writer.writeBE(len)
+        }
+        let padding = max(0, Self.indexCapacity - blocks.count)
+        if padding > 0 {
+            for _ in 0..<padding {
+                writer.writeBE(UInt32(0))
+                writer.writeBE(UInt32(0))
+            }
         }
         let indexLength = UInt32(writer.offset) - indexOffset
 

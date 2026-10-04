@@ -1,134 +1,77 @@
 import Foundation
 
-/// Writes a BOM B+ tree.
+/// Writes BOM B+ trees in actool 27.0's physical layout.
 ///
-/// Layout (big-endian unless noted):
-/// - Tree header block: `'tree' u32`, `version u32`, `childBlockID u32`,
-///   `blockSize u32`, `pathCount u32`, `isPathInternal u8`.
-/// - Each node block: header of `isLeaf u16`, `count u16`, `forwardLink u32`,
-///   `backwardLink u32`, followed by `count` entries of `{ valueBlockID u32, keyBlockID u32 }`.
+/// Layout (verified byte-level against actool 27.0 output):
 ///
-/// For v1 catalogs we expect to write small trees that fit in a single leaf,
-/// so this writer emits exactly one leaf node.
-struct BOMTree {
+/// - **Header block (29 bytes):** `'tree' u32-BE, version u32-BE(1), leaf
+///   blockID u32-BE, blockSize u32-BE (4096, or 1024 for BITMAPKEYS),
+///   pathCount u32-BE, isPathInternal u8, keyTrailerLength u32-BE, 4 zero
+///   bytes. The trailer length is the size of the key-byte run appended after
+///   the leaf's padding (0 for inline-key trees).
+/// - **Leaf block:** `isLeaf u16-BE(1), count u16-BE, forward u32-BE, backward
+///   u32-BE`, then `count * { valueBlockID u32-BE, keyBlockID u32-BE }` (or
+///   `{ valueBlockID u32-BE, inlineKey u32-BE }` when internal), zero-padded to
+///   blockSize, then the concatenated key bytes (`trailer`).
+/// - **Data blocks:** one block per key and one per value, allocated
+///   separately from the leaf.
+enum BOMTree {
     struct Entry {
         var key: Data
         var value: Data
     }
 
-    /// Entry whose key is stored INLINE in the leaf (as a u32) instead of
-    /// pointing to a separate key block. Used by trees with
-    /// `isPathInternal = true` -- notably `BITMAPKEYS`.
-    struct InlineKeyEntry {
-        var key: UInt32
-        var value: Data
-    }
-
     static let treeMagic: UInt32 = 0x74726565 // 'tree'
+    static let defaultBlockSize: UInt32 = 4096
 
-    /// Inserts the tree into the BOM writer and returns the block ID of the tree header.
-    @discardableResult
-    static func insert(
-        into bom: inout BOMWriter,
-        entries: [Entry]
-    ) -> UInt32 {
-        // Sort by lexicographic byte order; BOM trees use byte-wise comparison
-        // and CoreUI does binary search on rendition keys.
-        let sorted = entries.sorted { lhs, rhs in
-            byteCompare(lhs.key, rhs.key) < 0
-        }
-
-        var keyBlockIDs: [UInt32] = []
-        var valueBlockIDs: [UInt32] = []
-        for entry in sorted {
-            // actool / CoreUI convention: value block is allocated BEFORE
-            // its corresponding key block, so the value block has the lower
-            // ID. UIImage(named:) lookup quietly returns nil when this
-            // ordering is reversed (the catalog still parses with assetutil
-            // but iOS's runtime walks the leaf assuming value-first IDs).
-            valueBlockIDs.append(bom.addBlock(entry.value))
-            keyBlockIDs.append(bom.addBlock(entry.key))
-        }
-
-        // Leaf node block, padded to blockSize. macOS 26.4+'s assetutil reads
-        // the leaf as a `blockSize`-sized stream and faults with
-        // `BOMStreamGetDataPointer buffer overflow` if the underlying block is
-        // shorter; older assetutil silently tolerated a short leaf.
-        let blockSize: UInt32 = 4096
-        var leaf = ByteWriter()
-        leaf.writeBE(UInt16(1))                     // isLeaf
-        leaf.writeBE(UInt16(sorted.count))          // count
-        leaf.writeBE(UInt32(0))                     // forwardLink
-        leaf.writeBE(UInt32(0))                     // backwardLink
-        for i in 0..<sorted.count {
-            leaf.writeBE(valueBlockIDs[i])
-            leaf.writeBE(keyBlockIDs[i])
-        }
-        if leaf.offset < Int(blockSize) {
-            leaf.writeZeros(Int(blockSize) - leaf.offset)
-        }
-        let leafID = bom.addBlock(leaf.data)
-
-        // Tree header block. actool's tree headers are 29 bytes -- 21 bytes
-        // of fixed fields plus 8 trailing zeros (probably reserved/align).
-        // Match the layout so all trees in our output are the same size as
-        // the reference.
-        var header = ByteWriter()
-        header.writeBE(treeMagic)
-        header.writeBE(UInt32(1))                   // version
-        header.writeBE(leafID)                      // childBlockID
-        header.writeBE(blockSize)
-        header.writeBE(UInt32(sorted.count))        // pathCount
-        header.write(byte: 0)                       // isPathInternal
-        header.writeZeros(8)                        // trailing reserved
-        return bom.addBlock(header.data)
+    /// Header block for a tree whose leaf lives in `leafBlockID`.
+    static func header(
+        leafBlockID: UInt32,
+        blockSize: UInt32,
+        pathCount: Int,
+        isInternal: Bool,
+        keyTrailerLength: Int
+    ) -> Data {
+        var w = ByteWriter()
+        w.writeBE(treeMagic)
+        w.writeBE(UInt32(1))
+        w.writeBE(leafBlockID)
+        w.writeBE(blockSize)
+        w.writeBE(UInt32(pathCount))
+        w.write(byte: isInternal ? 1 : 0)
+        w.writeBE(UInt32(keyTrailerLength))
+        w.writeZeros(4)
+        precondition(w.offset == 29, "tree header must be 29 bytes; got \(w.offset)")
+        return w.data
     }
 
-    /// Inserts a tree whose leaf entries carry an inline u32 key (the
-    /// `isPathInternal = true` form). The leaf still stores `(valueBlockID,
-    /// keyValue)` per entry, but `keyValue` is an inline u32 (typically a
-    /// NameIdentifier) rather than a pointer to a key block.
-    @discardableResult
-    static func insertInlineKey(
-        into bom: inout BOMWriter,
-        entries: [InlineKeyEntry],
-        blockSize: UInt32
-    ) -> UInt32 {
-        // Sort by key value; CoreUI binary-searches on the inline u32.
-        let sorted = entries.sorted { $0.key < $1.key }
-
-        var valueBlockIDs: [UInt32] = []
-        for entry in sorted {
-            valueBlockIDs.append(bom.addBlock(entry.value))
+    /// Leaf block: entry table zero-padded to `blockSize`, then `trailer`
+    /// (the concatenated key bytes) appended after the padding. `keyIDs` are
+    /// the key data block ids, or the inline u32 keys when `isInternal`.
+    static func leaf(
+        entries: [(valueBlockID: UInt32, keyID: UInt32)],
+        blockSize: UInt32,
+        isInternal: Bool,
+        trailer: Data
+    ) -> Data {
+        var w = ByteWriter()
+        w.writeBE(UInt16(1)) // isLeaf
+        w.writeBE(UInt16(entries.count))
+        w.writeBE(UInt32(0)) // forward
+        w.writeBE(UInt32(0)) // backward
+        for entry in entries {
+            w.writeBE(entry.valueBlockID)
+            w.writeBE(entry.keyID)
         }
-
-        // Leaf node block, padded to blockSize.
-        var leaf = ByteWriter()
-        leaf.writeBE(UInt16(1))                     // isLeaf
-        leaf.writeBE(UInt16(sorted.count))          // count
-        leaf.writeBE(UInt32(0))                     // forwardLink
-        leaf.writeBE(UInt32(0))                     // backwardLink
-        for i in 0..<sorted.count {
-            leaf.writeBE(valueBlockIDs[i])
-            leaf.writeBE(sorted[i].key)             // inline key value
+        if w.offset < Int(blockSize) {
+            w.writeZeros(Int(blockSize) - w.offset)
         }
-        if leaf.offset < Int(blockSize) {
-            leaf.writeZeros(Int(blockSize) - leaf.offset)
-        }
-        let leafID = bom.addBlock(leaf.data)
-
-        // Tree header block (29 bytes including 8 trailing reserved).
-        var header = ByteWriter()
-        header.writeBE(treeMagic)
-        header.writeBE(UInt32(1))                   // version
-        header.writeBE(leafID)                      // childBlockID
-        header.writeBE(blockSize)
-        header.writeBE(UInt32(sorted.count))        // pathCount
-        header.write(byte: 1)                       // isPathInternal = true
-        header.writeZeros(8)                        // trailing reserved
-        return bom.addBlock(header.data)
+        w.write(trailer)
+        return w.data
     }
 
+    /// Sorts entries by raw key bytes; BOM trees use byte-wise comparison and
+    /// CoreUI binary-searches rendition keys.
     static func byteCompare(_ a: Data, _ b: Data) -> Int {
         let count = min(a.count, b.count)
         for i in 0..<count {

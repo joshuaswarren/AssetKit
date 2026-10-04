@@ -97,13 +97,11 @@ enum BitmapKeys {
         }
     }
 
-    /// Per-asset BITMAPKEYS entry: `(NameIdentifier, descriptor bytes)`.
-    static func entries(for assets: [(name: String, descriptor: Descriptor)]) -> [BOMTree.InlineKeyEntry] {
+    /// Per-asset BITMAPKEYS entry: `(inline u32 key = NameIdentifier, value
+    /// = descriptor bytes)`.
+    static func entries(for assets: [(name: String, descriptor: Descriptor)]) -> [(key: UInt32, value: Data)] {
         return assets.map { asset in
-            BOMTree.InlineKeyEntry(
-                key: FacetKeys.nameHash(asset.name) & 0xFFFF,
-                value: asset.descriptor.encode()
-            )
+            (key: FacetKeys.nameHash(asset.name) & 0xFFFF, value: asset.descriptor.encode())
         }
     }
 
