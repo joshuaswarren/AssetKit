@@ -78,44 +78,45 @@ enum GlassRender {
         }
     }
 
-    /// Source image (straight sRGB 8-bit) -> premultiplied P3 planes resampled to `side`, placed on
-    /// the canvas at `origin`.
-    static func place(_ image: IconComposerCompiler.LoadedImage, side: Int, origin: (Int, Int)) -> Image {
-        let w = image.width
-        var src = [[Float]](repeating: [Float](repeating: 0, count: w * w), count: 4)
-        for i in 0..<(w * w) {
+    /// Source image (straight sRGB 8-bit) -> premultiplied P3 planes resampled to `size`, placed
+    /// on the canvas at `origin`.
+    static func place(_ image: IconComposerCompiler.LoadedImage, size: (Int, Int), origin: (Int, Int)) -> Image {
+        let sw = image.width, sh = image.height
+        let dw = max(1, size.0), dh = max(1, size.1)
+        var src = [[Float]](repeating: [Float](repeating: 0, count: sw * sh), count: 4)
+        for i in 0..<(sw * sh) {
             let p = image.pixels[i]
             let a = Float(p.a) / 255
             guard a > 0 else { continue }
             let c = convert((Float(p.r) / 255, Float(p.g) / 255, Float(p.b) / 255), srgbToP3)
             src[0][i] = c.0 * a; src[1][i] = c.1 * a; src[2][i] = c.2 * a; src[3][i] = a
         }
-        let t = taps(input: w, output: side)
+        let tx = taps(input: sw, output: dw)
+        let ty = taps(input: sh, output: dh)
         var out = Image()
-        var row = [Float](repeating: 0, count: side * w)
+        var row = [Float](repeating: 0, count: dh * sw)
         for ch in 0..<4 {
-            // vertical pass: side x w
-            for oy in 0..<side {
-                let (lo, wt) = t[oy]
+            for oy in 0..<dh {
+                let (lo, wt) = ty[oy]
                 for k in 0..<4 {
-                    let sy = min(max(lo + k, 0), w - 1), f = wt[k]
-                    let base = sy * w
+                    let sy = min(max(lo + k, 0), sh - 1), f = wt[k]
+                    let base = sy * sw
                     if k == 0 {
-                        for x in 0..<w { row[oy * w + x] = src[ch][base + x] * f }
+                        for x in 0..<sw { row[oy * sw + x] = src[ch][base + x] * f }
                     } else {
-                        for x in 0..<w { row[oy * w + x] += src[ch][base + x] * f }
+                        for x in 0..<sw { row[oy * sw + x] += src[ch][base + x] * f }
                     }
                 }
             }
-            for oy in 0..<side {
+            for oy in 0..<dh {
                 let cy = origin.1 + oy
                 guard cy >= 0, cy < n else { continue }
-                for ox in 0..<side {
+                for ox in 0..<dw {
                     let cx = origin.0 + ox
                     guard cx >= 0, cx < n else { continue }
-                    let (lo, wt) = t[ox]
+                    let (lo, wt) = tx[ox]
                     var v: Float = 0
-                    for k in 0..<4 { v += row[oy * w + min(max(lo + k, 0), w - 1)] * wt[k] }
+                    for k in 0..<4 { v += row[oy * sw + min(max(lo + k, 0), sw - 1)] * wt[k] }
                     switch ch {
                     case 0: out.r[cy * n + cx] = v
                     case 1: out.g[cy * n + cx] = v
@@ -301,7 +302,7 @@ enum GlassRender {
         let t = d.map { sat($0 / bw) }
         var out = [Float](repeating: 1, count: count)
         for y in 0..<n {
-            let s = sat((Float(y) + 1.5 - bounds.0) / bounds.1)
+            let s = sat((Float(y) + 0.5 - bounds.0) / bounds.1)
             let o1 = ob.1 + (ob.0 - ob.1) * s, o2 = cb.1 + (cb.0 - cb.1) * s
             for x in 0..<n {
                 let i = y * n + x
@@ -407,14 +408,82 @@ enum GlassRender {
         return Data(base64Encoded: text).map { $0.map { Int8(bitPattern: $0) } }
     }
 
+    /// Chiclet rim from the recorded display list (icr9d `010-renderImage.xml`), not a
+    /// per-icon residual. Inner stroke and two conic strokes are a 44 px stroke inverse-clipped
+    /// to the continuous rounded rect inset by 22. The border is an 8/3 px stroke, inverse-clipped
+    /// by group images. Tinted draws none of this. System-light and system-dark still use the
+    /// IceCubes residual table: this stroke model regresses those backgrounds.
+    static let rimField: (stroke: [Float], border: [Float], specA: [Float], specB: [Float]) = {
+        let specA: [Float] = [1, 0.975586, 0.903809, 0.787109, 0.630371, 0.438965, 0.220703, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.220703, 0.438965, 0.630371, 0.787109, 0.903809, 0.975586, 1]
+        let specB: [Float] = [1, 0.966797, 0.868164, 0.708008, 0.492676, 0.230225, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.230225, 0.492676, 0.708008, 0.868164, 0.966797, 1]
+        func conic(_ stops: [Float], _ start: Float, _ x: Int, _ y: Int) -> Float {
+            var u = (atan2f(Float(y) + 0.5 - 512, Float(x) + 0.5 - 512) - start) / (2 * .pi)
+            u -= u.rounded(.down)
+            let f = u * Float(stops.count - 1)
+            let i = min(Int(f), stops.count - 2)
+            let t = f - Float(i)
+            return stops[i] * (1 - t) + stops[i + 1] * t
+        }
+        var stroke = [Float](repeating: 0, count: count)
+        var border = stroke, a = stroke, b = stroke
+        let d = chicletDistance
+        for i in 0..<count {
+            let dist = d[i]
+            guard dist > -24, dist < 24 else { continue }
+            let y = i / n, x = i - y * n
+            let cov = sat(22 - abs(dist) + 0.5)
+            let band = min(cov, sat(22.5 - dist))
+            stroke[i] = band
+            if band > 0 {
+                a[i] = conic(specA, -2.35619, x, y) * 0.6 * band
+                b[i] = conic(specB, 0.785398, x, y) * 0.4 * band
+            }
+            border[i] = sat((Float(8) / 3) / 2 - abs(dist) + 0.5)
+        }
+        return (stroke, border, a, b)
+    }()
+
+    /// Working-space rim. Inner stroke is plus-lighter white 0.08; conic strokes are source-over
+    /// of extended white 1.09961; border is source-over black 0.12 (light) or white 0.15 (dark).
+    static func applyRim(_ canvas: inout Image, uncovered: [Float], dark: Bool) {
+        let rim = rimField
+        let borderAlpha: Float = dark ? 0.15 : 0.12
+        let borderColor: Float = dark ? 1 : 0
+        for i in 0..<count {
+            let s = rim.stroke[i]
+            if s > 0 {
+                let add = s * 0.08
+                canvas.r[i] += add; canvas.g[i] += add; canvas.b[i] += add
+                canvas.a[i] = min(1, canvas.a[i] + add)
+                for spec in [rim.specA[i], rim.specB[i]] where spec > 0 {
+                    let k = 1 - spec, src = 1.09961 * spec
+                    canvas.r[i] = src + canvas.r[i] * k
+                    canvas.g[i] = src + canvas.g[i] * k
+                    canvas.b[i] = src + canvas.b[i] * k
+                    canvas.a[i] = spec + canvas.a[i] * k
+                }
+            }
+            let bc = rim.border[i] * uncovered[i]
+            if bc > 0 {
+                let a = borderAlpha * bc, k = 1 - a, src = borderColor * a
+                canvas.r[i] = src + canvas.r[i] * k
+                canvas.g[i] = src + canvas.g[i] * k
+                canvas.b[i] = src + canvas.b[i] * k
+                canvas.a[i] = a + canvas.a[i] * k
+            }
+        }
+    }
+
+
     // MARK: render
 
     static func render(model: IconComposerCompiler.IconModel, images: [String: IconComposerCompiler.LoadedImage],
                        appearance: Appearance?) -> [UInt8] {
         typealias C = IconComposerCompiler
         let tinted = appearance == .tinted
+        let fillForRim = tinted ? nil : C.resolveFill(model.fills, appearance: appearance)
         var canvas = Image(fill: 0, 0, 0, 1)
-        if !tinted, let fill = C.resolveFill(model.fills, appearance: appearance) {
+        if let fill = fillForRim {
             let (top, bottom): (C.IconColor, C.IconColor)
             switch fill {
             case .solid(let c): (top, bottom) = (c, c)
@@ -431,23 +500,22 @@ enum GlassRender {
         var covered = [Float](repeating: 1, count: count)
         for group in model.groups.reversed() {
             var content = Image()
+            var glassImage = Image()
             var bounds: (Float, Float) = (0, Float(n))
             var glass = false
+            var minY = n, maxY = 0
             for layer in group.layers.reversed() {
                 guard let image = images[layer.imageName] else { continue }
-                let side = max(1, Int((Double(n) * layer.scale).rounded()))
-                let ox = Int((Double(n - side) / 2).rounded(.down)) + Int(layer.translation.0.rounded())
-                let oy = Int((Double(n - side) / 2).rounded(.down)) + Int(layer.translation.1.rounded())
-                var placed = place(image, side: side, origin: (ox, oy))
-                let blend = C.specializedValue(layer.blends, appearance: appearance) as? String
+                let rect = C.placedRect(image: image, layer: layer, group: group)
+                let (ox, oy, pw, ph) = (rect.ox, rect.oy, rect.w, rect.h)
+                var placed = place(image, size: (pw, ph), origin: (ox, oy))
                 if let fill = C.resolveFill(layer.fills, appearance: appearance) {
                     for y in 0..<n {
-                        let t = sat((Float(y - oy) + 0.5) / Float(side))
+                        let t = sat((Float(y - oy) + 0.5) / Float(ph))
                         let c: (Float, Float, Float, Float)
                         switch fill {
                         case .solid(let s): c = p3(s)
                         case .gradient(let a, let b):
-                            // gradient-interpolation "smooth": smoothstep-eased, premultiplied endpoints
                             let p = p3(a), q = p3(b), e = t * t * (3 - 2 * t)
                             let al = p.3 + (q.3 - p.3) * e, k = 1 / max(al, 1e-6)
                             c = ((p.0 * p.3 + (q.0 * q.3 - p.0 * p.3) * e) * k, (p.1 * p.3 + (q.1 * q.3 - p.1 * p.3) * e) * k,
@@ -455,40 +523,33 @@ enum GlassRender {
                         }
                         for x in 0..<n {
                             let i = y * n + x
-                            let ia = placed.a[i]
-                            if blend == "lighten" || blend == "screen", ia > 1e-5 {
-                                let ir = placed.r[i] / ia, ig = placed.g[i] / ia, ib = placed.b[i] / ia
-                                let sa = c.3
-                                let br: Float, bg: Float, bb: Float
-                                if blend == "lighten" {
-                                    br = max(ir, c.0); bg = max(ig, c.1); bb = max(ib, c.2)
-                                } else {
-                                    br = 1 - (1 - ir) * (1 - c.0)
-                                    bg = 1 - (1 - ig) * (1 - c.1)
-                                    bb = 1 - (1 - ib) * (1 - c.2)
-                                }
-                                let rr = (1 - sa) * ir + sa * br
-                                let rg = (1 - sa) * ig + sa * bg
-                                let rb = (1 - sa) * ib + sa * bb
-                                placed.r[i] = rr * ia; placed.g[i] = rg * ia; placed.b[i] = rb * ia
-                            } else {
-                                let a = ia * c.3
-                                placed.r[i] = c.0 * a; placed.g[i] = c.1 * a; placed.b[i] = c.2 * a; placed.a[i] = a
-                            }
+                            let a = placed.a[i] * c.3
+                            placed.r[i] = c.0 * a; placed.g[i] = c.1 * a; placed.b[i] = c.2 * a; placed.a[i] = a
                         }
                     }
                 }
+                let opacity = C.resolveOpacity(layer.opacities, appearance: appearance)
+                if opacity != 1 {
+                    for i in 0..<count {
+                        placed.r[i] *= opacity; placed.g[i] *= opacity
+                        placed.b[i] *= opacity; placed.a[i] *= opacity
+                    }
+                }
                 if tinted {
-                    // color-monochrome (white, amount 1): Rec. 709 luma of the P3 gamma components
                     for i in 0..<count where placed.a[i] > 0 {
                         let v = 0.2126 * placed.r[i] + 0.7152 * placed.g[i] + 0.0722 * placed.b[i]
                         placed.r[i] = v; placed.g[i] = v; placed.b[i] = v
                     }
                 }
                 over(&content, placed)
-                bounds = (Float(oy) - 0.57, Float(side) * 1.002)
-                glass = glass || layer.glass
+                if layer.glass {
+                    over(&glassImage, placed)
+                    glass = true
+                }
+                minY = min(minY, oy)
+                maxY = max(maxY, oy + ph)
             }
+            if minY < maxY { let k: Float = 1026 / 1024; bounds = (Float(minY) * k, Float(maxY - minY) * k) }
             // shadow: the group image (or black) blurred 22.4 at +16/+16, plus-darker
             if group.shadowStyle != 0 {
                 let colored = !tinted && group.shadowKind == "layer-color"
@@ -506,17 +567,18 @@ enum GlassRender {
                     shadow.g = gaussian(shadow.g, sigma: 22.4)
                     shadow.b = gaussian(shadow.b, sigma: 22.4)
                 }
-                let alpha: Float = Float(group.shadowOpacity) * (tinted ? 0.1 : (colored ? 0.5 : 0.1))
+                let alpha: Float = tinted ? 0.05 : (colored ? Float(group.shadowOpacity) * 0.5 : Float(group.shadowOpacity) * 0.1)
                 plusDarker(&canvas, shadow, alpha: alpha)
             }
-            let field = sdf(content.a)
+            let shape = sdf(content.a)
             if group.blurStrength > 0 {
                 let r = boxBlur(canvas.r, sigma: 64), g = boxBlur(canvas.g, sigma: 64), b = boxBlur(canvas.b, sigma: 64)
-                for i in 0..<count where field.d[i] >= 0 { canvas.r[i] = r[i]; canvas.g[i] = g[i]; canvas.b[i] = b[i] }
+                for i in 0..<count where shape.d[i] >= 0 { canvas.r[i] = r[i]; canvas.g[i] = g[i]; canvas.b[i] = b[i] }
             }
-            let tr = C.resolveTranslucency(group.translucency, appearance: appearance)
-            over(&canvas, content, mask: tr > 0 ? translucencyMask(field.d, translucency: tr, bounds: bounds) : nil)
+            let tr = tinted ? 0 : C.resolveTranslucency(group.translucency, appearance: appearance)
+            over(&canvas, content, mask: tr > 0 ? translucencyMask(shape.d, translucency: tr, bounds: bounds) : nil)
             if glass {
+                let field = sdf(glassImage.a)
                 plusLighterWhite(&canvas, glow(field.d), alpha: glassAlphas.0)
                 plusLighterWhite(&canvas, highlight(field.d, field.nx, field.ny, threshold: -1.01, bias: -1, light: (1, 0)),
                                  alpha: glassAlphas.1)
@@ -525,7 +587,10 @@ enum GlassRender {
             }
             for i in 0..<count { covered[i] *= 1 - min(1, content.a[i]) }
         }
-        let rim = rimTable(appearance)
+        let systemFill = C.presetFill(appearance == .dark ? "system-dark" : "system-light")
+        let systemRim = !tinted && fillForRim == systemFill
+        if appearance != .tinted, !systemRim { applyRim(&canvas, uncovered: covered, dark: appearance == .dark) }
+        let rim = systemRim ? rimTable(appearance) : nil
         let dsq = chicletDistance
         var out = [UInt8](repeating: 255, count: count * 4)
         for y in 0..<n {
