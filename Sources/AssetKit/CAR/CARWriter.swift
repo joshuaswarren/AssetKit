@@ -46,7 +46,7 @@ struct CARWriter: Sendable {
         let appearanceData: [(key: Data, value: Data)] = AppearanceKeys.entries(used: layout.usedAppearances)
             .map { (key: $0.key, value: $0.value) }
             .sorted { BOMTree.byteCompare($0.key, $1.key) < 0 }
-        let bitmapData: [(key: Data, value: Data)] = bitmapEntries(layout: layout)
+        let bitmapData: [(key: Data, value: Data)] = bitmapEntries(layout: layout, keyTokenCount: keyFormat.count)
             .sorted { BOMTree.byteCompare($0.key, $1.key) < 0 }
 
         // ---- Deterministic block ids (1-based, actool order) ----
@@ -86,33 +86,35 @@ struct CARWriter: Sendable {
             keyBlockIDs: renditionsWithIDs.map { $0.ids.key },
             valueBlockIDs: renditionsWithIDs.map { $0.ids.value },
             blockSize: BOMTree.defaultBlockSize))
+        // actool's leaf rule, verified across the icon / NNW / base+tinted
+        // oracle cars: keys of ONE uniform length are inlined into the leaf
+        // (trailer = that length, key area appended after the 4096 block);
+        // variable-length keys go external-only with trailer -1.
+        let facetKeysInline = Set(facetData.map { $0.key.count }).count <= 1
+        let facetTrailer = facetKeysInline ? (facetData.first?.key.count ?? 0) : -1
         bom.addBlock(BOMTree.header(
             leafBlockID: facetTree.value, blockSize: BOMTree.defaultBlockSize,
             pathCount: facetData.count, isInternal: false,
-            // -1 (0xFFFFFFFF) marks "variable-length keys, external
-            // blocks" — Apple's FACETKEYS/APPEARANCEKEYS headers carry -1,
-            // RENDITIONS the exact fixed key length.
-            keyTrailerLength: -1))
+            keyTrailerLength: facetTrailer))
         bom.addBlock(BOMTree.leafExternal(
             sorted: facetData,
             keyBlockIDs: facetDataIDs.map { $0.key },
             valueBlockIDs: facetDataIDs.map { $0.value },
             blockSize: BOMTree.defaultBlockSize,
-            // Variable-length string keys stay in external blocks only;
-            // Apple's FACETKEYS leaf carries no inline key area.
-            inlineKeys: false))
+            inlineKeys: facetKeysInline))
 
+        let appearanceKeysInline = Set(appearanceData.map { $0.key.count }).count <= 1
+        let appearanceTrailer = appearanceKeysInline ? (appearanceData.first?.key.count ?? 0) : -1
         bom.addBlock(BOMTree.header(
             leafBlockID: appearanceTree.value, blockSize: BOMTree.defaultBlockSize,
             pathCount: appearanceData.count, isInternal: false,
-            keyTrailerLength: -1))
+            keyTrailerLength: appearanceTrailer))
         bom.addBlock(BOMTree.leafExternal(
             sorted: appearanceData,
             keyBlockIDs: appearanceDataIDs.map { $0.key },
             valueBlockIDs: appearanceDataIDs.map { $0.value },
             blockSize: BOMTree.defaultBlockSize,
-            // Same as FACETKEYS: external key blocks only.
-            inlineKeys: false))
+            inlineKeys: appearanceKeysInline))
 
         for (entry, _) in zip(appearanceData, appearanceDataIDs) {
             bom.addBlock(entry.key)
@@ -167,11 +169,12 @@ struct CARWriter: Sendable {
     /// BITMAPKEYS entries: inline u32 key = NameIdentifier (big-endian 4
     /// bytes), value = the 52/48-byte descriptor. Color-only assets produce
     /// no row.
-    private func bitmapEntries(layout: CARLayout) -> [(key: Data, value: Data)] {
+    private func bitmapEntries(layout: CARLayout, keyTokenCount: Int) -> [(key: Data, value: Data)] {
         layout.assets.compactMap { asset in
             guard let descriptor = BitmapKeys.descriptor(
                 forAsset: asset.name,
-                renditions: asset.renditions
+                renditions: asset.renditions,
+                keyTokenCount: keyTokenCount
             ) else { return nil }
             let identifier = UInt32(FacetKeys.nameHash(asset.name) & 0xFFFF)
             return (key: Data([

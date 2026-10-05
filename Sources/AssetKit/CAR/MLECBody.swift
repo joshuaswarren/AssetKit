@@ -1,13 +1,15 @@
 import Foundation
 
-/// MLEC wrapper for bitmap pixels, framed in one or three KCBC chunks.
+/// MLEC wrapper for bitmap pixels, framed in one or four KCBC chunks.
 ///
 /// Layout verified against actool's reference Assets.car:
 ///
 ///   MLEC magic        4 bytes
 ///   compressionType   u32  (0 = raw, 3 = LZFSE)
-///   bytesPerPixel     u32  (4 for BGRA8)
-///   chunkCount        u32  (1 or 3)
+///   bytesPerPixel     u32  (actool writes the CONSTANT 4 — even for GA8,
+///                           whose payload chunks are 2 bytes per pixel;
+///                           verified on the base+tinted oracle car)
+///   chunkCount        u32  (3 or 4)
 ///   then chunkCount * KCBC chunks
 ///
 /// Each KCBC chunk:
@@ -18,10 +20,11 @@ import Foundation
 ///   payloadSize       u32  (bytes of compressed payload following)
 ///   payload[]         LZFSE bvx2 stream
 ///
-/// Chunking policy mirrors actool: when height divides evenly by 3, emit 3
-/// chunks of equal row height (120 -> 3x40, 180 -> 3x60); otherwise emit a
-/// single chunk covering the whole image. The 3-chunk split is mimicry
-/// rather than a correctness requirement: CoreUI accepts both layouts.
+/// Chunking policy mirrors actool: three chunks of floor(height/3) rows,
+/// plus a fourth chunk carrying the remainder when height does not divide
+/// by three (1024 -> 341/341/341/1; 120 -> 3x40). The GA8/GA16 oracle cars
+/// confirm the four-chunk split for 1024-row icons; CoreUI also accepts a
+/// single chunk, but App Store processing compares against actool's shape.
 enum MLECBody {
     static func encode(
         width: UInt32,
@@ -30,23 +33,29 @@ enum MLECBody {
         pixels: [UInt8]
     ) -> Data {
         let bytesPerRow = Int(width) * Int(bytesPerPixel)
-        let canChunkInThree = height % 3 == 0
-        let chunkCount: UInt32 = canChunkInThree ? 3 : 1
-        let rowsPerChunk = height / chunkCount
-
+        let rowsPerChunk = height / 3
+        let remainder = height % 3
         var chunks: [(rows: UInt32, payload: [UInt8])] = []
-        for i in 0..<Int(chunkCount) {
-            let start = i * Int(rowsPerChunk) * bytesPerRow
-            let end = start + Int(rowsPerChunk) * bytesPerRow
-            let slice = Array(pixels[start..<end])
-            chunks.append((rows: rowsPerChunk, payload: LZFSE.encode(slice)))
+        if rowsPerChunk == 0 {
+            // Height 1..2: the three-way split degenerates; one chunk.
+            chunks.append((rows: height, payload: LZFSE.encode(pixels)))
+        } else {
+            for i in 0..<3 {
+                let start = Int(i) * Int(rowsPerChunk) * bytesPerRow
+                let end = start + Int(rowsPerChunk) * bytesPerRow
+                chunks.append((rows: rowsPerChunk, payload: LZFSE.encode(Array(pixels[start..<end]))))
+            }
+            if remainder > 0 {
+                let start = 3 * Int(rowsPerChunk) * bytesPerRow
+                chunks.append((rows: remainder, payload: LZFSE.encode(Array(pixels[start...]))))
+            }
         }
 
         var w = ByteWriter()
         w.writeFourCC("MLEC")
         w.writeLE(UInt32(3))                    // compressionType = 3 (LZFSE)
-        w.writeLE(bytesPerPixel)                // bytesPerPixel (BGRA8 = 4, GA8 = 2)
-        w.writeLE(chunkCount)
+        w.writeLE(UInt32(4))                    // bytesPerPixel: constant 4, like actool
+        w.writeLE(UInt32(chunks.count))
 
         for chunk in chunks {
             w.writeFourCC("KCBC")

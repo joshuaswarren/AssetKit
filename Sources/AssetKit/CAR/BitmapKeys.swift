@@ -26,6 +26,10 @@ enum BitmapKeys {
         var idiomSubtypeCount: UInt32
         /// Overrides the count slot for the single-size appicon shape.
         var countOverride: UInt32? = nil
+        /// Icon rendition groups (see `encode`) for the single-size shape.
+        var renditionGroups: UInt32 = 0
+        /// The catalog's KEYFORMAT token count (drives hdrSize/keyLen/size).
+        var keyTokenCount: Int = 9
 
         enum Kind {
             case appIcon
@@ -67,50 +71,43 @@ enum BitmapKeys {
         }
 
         func encode() -> Data {
-            // Single-size appicons: exact 52-byte descriptor from the
-            // actool 27.0 democar2 oracle.
-            if kind == .appIconSingleSize {
-                var w = ByteWriter()
-                for v: UInt32 in [1, 0, 0x28, 9, 0xFFFFFFFF, 1, 0x02, 2, 1, 3,
-                                  0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF] {
-                    w.writeLE(v)
-                }
-                precondition(w.offset == 52)
-                return w.data
-            }
-            // All other kinds: generic 52-byte (icon/image/vector) or
-            // 48-byte (color) descriptor.
             var w = ByteWriter()
             w.writeLE(UInt32(1))
             w.writeLE(UInt32(0))
-            let hdrSize: UInt32 = kind == .color ? 0x24 : 0x28
-            let keyLen: UInt32 = kind == .color ? 8 : 9
-            w.writeLE(hdrSize)
-            w.writeLE(keyLen)
+            w.writeLE(UInt32((keyTokenCount + 1) * 4))  // hdrSize
+            w.writeLE(UInt32(keyTokenCount))            // keyLen
             w.writeLE(UInt32(0xFFFFFFFF))
             w.writeLE(UInt32(1))
             w.writeLE(assetKindMarker)
-            w.writeLE(idiomSubtypeCount)
+            let slots = keyTokenCount - 6
             switch kind {
+            case .color:
+                // Oracle (8/9/14-token color cars): all-ones slots.
+                for _ in 0..<slots { w.writeLE(UInt32(1)) }
+            case .appIconSingleSize:
+                // [groups, 1, 3] then 3s (9t: [6,1,3]; 10t: [6,1,3,3]).
+                w.writeLE(renditionGroups)
+                w.writeLE(UInt32(1))
+                w.writeLE(UInt32(3))
+                for _ in 0..<(slots - 3) { w.writeLE(UInt32(3)) }
             case .appIcon:
+                // Classic multi-size oracle (9t): [70, (1,1), 63].
+                w.writeLE(UInt32(70))
                 w.writeLE(UInt16(1))
                 w.writeLE(UInt16(1))
-                w.writeLE(UInt32(7))
+                w.writeLE(UInt32(63))
+                for _ in 0..<(slots - 3) { w.writeLE(UInt32(1)) }
             case .image, .vector, .vectorDiscarded:
+                w.writeLE(idiomSubtypeCount)
                 w.writeLE(UInt16(1))
                 w.writeLE(UInt16(0))
                 w.writeLE(UInt32(1))
-            case .color:
-                w.writeLE(UInt16(1))
-                w.writeLE(UInt16(0))
-            case .appIconSingleSize:
-                break
+                for _ in 0..<(slots - 3) { w.writeLE(UInt32(1)) }
             }
-            let sentinels = kind == .color ? 3 : 3
-            for _ in 0..<sentinels {
+            for _ in 0..<3 {
                 w.writeLE(UInt32(0xFFFFFFFF))
             }
-            let expectedSize = kind == .color ? 48 : 52
+            let expectedSize = (keyTokenCount + 4) * 4
             precondition(
                 w.offset == expectedSize,
                 "BITMAPKEYS descriptor must be \(expectedSize) bytes; got \(w.offset)")
@@ -134,7 +131,11 @@ enum BitmapKeys {
     /// `renditions` is the per-asset slice -- only the renditions whose
     /// `name` equals this asset's name. Caller is responsible for the
     /// grouping; this function does not re-filter.
-    static func descriptor(forAsset name: String, renditions: [Rendition]) -> Descriptor? {
+    static func descriptor(
+        forAsset name: String,
+        renditions: [Rendition],
+        keyTokenCount: Int
+    ) -> Descriptor? {
         let hasDescribableRendition = renditions.contains { rendition in
             switch rendition.body {
             case .bitmap, .preservedSource, .color: return true
@@ -154,11 +155,26 @@ enum BitmapKeys {
             guard case .bitmap = rendition.body else { return nil }
             return rendition.iconIndex
         })
+        var renditionGroups: UInt32 = 0
         if kind == .appIcon,
            renditions.contains(where: { if case .multiSized = $0.body { return true }; return false }),
            bitmapIndices.count <= 1 {
             effectiveKind = .appIconSingleSize
             countOverride = UInt32(renditions.count)
+            // Icon rendition groups: distinct (idiom, appearance) bitmap
+            // variants — the tinted GA8/GA16 encodings share one group —
+            // plus one per MultiSized container (cs1: 4 + 2 = 6; tint:
+            // base(2) + tinted(2) + MS(2) = 6).
+            let bitmapGroups = Set(renditions.compactMap { rendition -> UInt32? in
+                guard case .bitmap = rendition.body else { return nil }
+                let appearanceKey = UInt32(rendition.appearance?.keyToken ?? 0) << 16
+                return UInt32(rendition.idiom.rawValueByte) | appearanceKey
+            }).count
+            let multiSized = renditions.filter {
+                if case .multiSized = $0.body { return true }
+                return false
+            }.count
+            renditionGroups = UInt32(bitmapGroups + multiSized)
         }
 
         let idiomSubtypes = Set(renditions.map { rendition -> UInt32 in
@@ -170,7 +186,9 @@ enum BitmapKeys {
         return Descriptor(
             kind: effectiveKind,
             idiomSubtypeCount: UInt32(idiomSubtypes.count),
-            countOverride: countOverride)
+            countOverride: countOverride,
+            renditionGroups: renditionGroups,
+            keyTokenCount: keyTokenCount)
     }
 
     /// AppIcon takes precedence over Vector takes precedence over Image:

@@ -112,7 +112,9 @@ struct ColorSpaceTests {
                 Issue.record("\(name): expected color body")
                 return
             }
-            #expect(lightBody.components == components, "\(name)")
+            // Components arrive float32-widened (actool parses component
+            // strings as Float32), so compare against the widened inputs.
+            #expect(lightBody.components == components.map { Double(Float($0)) }, "\(name)")
             #expect(lightBody.colorSpaceID == colorSpaceID, "\(name)")
             let csi = CSIWriter.color(name: name, body: lightBody)
             if csi != bytes(oracleHex) {
@@ -164,9 +166,42 @@ struct ColorSpaceTests {
             Issue.record("expected color body")
             return
         }
-        #expect(extBody.components == [-0.2, 0.5])
+        #expect(extBody.components == [Double(Float(-0.2)), 0.5])
         #expect(Array(CSIWriter.color(name: "ExtGray", body: extBody)[212...])
             == Array(bytes("524c4f43010000000600000002000000000000a09999c9bf000000000000e03f")))
+    }
+
+    @Test("Integer component strings divide exactly in Double (actool parses Float32 first)")
+    func integerComponentPrecision() throws {
+        // Apple's iconBackgroundColor oracle: "235" -> 235/255 =
+        // 0.9215686274509803 as the exact Double — the Float32 pass happens
+        // on the parsed string value (235 is exact), NOT on the quotient.
+        let json = """
+        {
+          "info" : { "version" : 1, "author" : "xcode" },
+          "colors" : [
+            {
+              "idiom" : "universal",
+              "color" : {
+                "color-space" : "srgb",
+                "components" : { "red" : "235", "green" : "235", "blue" : "237", "alpha" : "255" }
+              }
+            }
+          ]
+        }
+        """
+        let contents = try JSONDecoder().decode(ColorSetContents.self, from: Data(json.utf8))
+        let set = LoadedColorSet(name: "IntColor", directory: URL(fileURLWithPath: "/"), contents: contents)
+        let renditions = try ColorRenderer.renditions(for: set)
+        guard case .color(let body) = renditions[0].body else {
+            Issue.record("expected color body")
+            return
+        }
+        let expected: [Double] = [235.0 / 255, 235.0 / 255, 237.0 / 255, 1.0]
+        #expect(body.components == expected)
+        // The stored Float64 is the exact quotient, not float32(235/255)
+        // widened (which would be 0.9215686321258545).
+        #expect(body.components[0] != Double(Float(235.0 / 255)))
     }
 
     /// Renders the numeric test components as JSON strings.
@@ -229,7 +264,7 @@ struct ColorSpaceTests {
                                    darkComponents: rgbComponents([0, 0, 0, 1]))
         let renditions = try ColorRenderer.renditions(for: set)
         let descriptor = try #require(BitmapKeys.descriptor(
-            forAsset: "Srgb", renditions: renditions))
+            forAsset: "Srgb", renditions: renditions, keyTokenCount: 8))
         // actool 27.0 value for a universal light+dark colorset, verbatim.
         let encoded = descriptor.encode()
         if encoded != bytes("01000000000000002400000008000000ffffffff01000000020000000100000001000000ffffffffffffffffffffffff") {

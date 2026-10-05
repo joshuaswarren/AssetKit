@@ -19,6 +19,17 @@ import Testing
 ///   inline key area and the exact key length).
 @Suite("AppIconSingleSizeAppearances")
 struct AppIconSingleSizeAppearancesTests {
+    private func bytes(_ hex: String) -> Data {
+        var data = Data()
+        var index = hex.startIndex
+        while index < hex.endIndex {
+            let next = hex.index(index, offsetBy: 2)
+            data.append(UInt8(hex[index..<next], radix: 16)!)
+            index = next
+        }
+        return data
+    }
+
     // MARK: - Fixtures
 
     /// Minimal valid 512x512-free: 1024x1024 would be slow; rendition keys
@@ -202,9 +213,45 @@ struct AppIconSingleSizeAppearancesTests {
         #expect(u32(g8, 184 + 92 + 8) == 16)  // 1 px * 2 B/px aligned to 16
         #expect(u32(g16, 184 + 92 + 8) == 16) // 1 px * 4 B/px aligned to 16
 
-        // MLEC header: compression 3, bytesPerPixel 2 vs 4.
-        #expect(u32(g8, 184 + 104 + 8) == 2)
+        // MLEC header: compression 3; bytesPerPixel is actool's CONSTANT 4
+        // for every pixel format (even GA8, whose chunks are 2 B/px).
+        #expect(u32(g8, 184 + 104 + 8) == 4)
         #expect(u32(g16, 184 + 104 + 8) == 4)
+    }
+
+    @Test("MLEC chunking matches actool: 3x floor(h/3) plus remainder, constant bpp 4")
+    func mlecChunking() {
+        func u32(_ data: Data, _ offset: Int) -> UInt32 {
+            data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: offset, as: UInt32.self) }
+        }
+
+        // 1024 rows -> 341/341/341/1, four KCBC chunks (oracle verified).
+        let body = MLECBody.encode(
+            width: 1024, height: 1024, bytesPerPixel: 2,
+            pixels: [UInt8](repeating: 0x80, count: 1024 * 2 * 1024))
+        #expect(u32(body, 4) == 3)  // compressionType
+        #expect(u32(body, 8) == 4)  // bytesPerPixel constant, even for 2 B/px GA8
+        #expect(u32(body, 12) == 4) // chunk count
+        var pos = 16
+        var rows: [UInt32] = []
+        for _ in 0..<4 {
+            #expect(Array(body[pos..<pos + 4]) == Array("KCBC".utf8))
+            rows.append(u32(body, pos + 12))
+            pos += 20 + Int(u32(body, pos + 16))
+        }
+        #expect(rows == [341, 341, 341, 1])
+        #expect(pos == body.count)
+
+        // 120 rows -> three equal chunks of 40.
+        let small = MLECBody.encode(
+            width: 120, height: 120,
+            pixels: [UInt8](repeating: 0, count: 120 * 120 * 4))
+        #expect(u32(small, 12) == 3)
+        #expect(u32(small, 28) == 40) // first KCBC chunkHeight
+
+        // Degenerate height 1 -> single chunk.
+        let tiny = MLECBody.encode(width: 1, height: 1, pixels: [0, 0, 0, 0])
+        #expect(u32(tiny, 12) == 1)
     }
 
     @Test("Tinted gray conversion: Rec. 709 luma and half-float 16-bit payload")
@@ -225,6 +272,43 @@ struct AppIconSingleSizeAppearancesTests {
             case .bgra8:
                 Issue.record("tinted variant must not carry an ARGB rendition")
             }
+        }
+    }
+
+    @Test("BITMAPKEYS single-size descriptors match the cs1/tint oracles")
+    func bitmapKeysDescriptors() throws {
+        // cs1 oracle (base+dark, 9-token KEYFORMAT): 52 bytes,
+        // [1, 0, 0x28, 9, -1, 1, 2, 6, 1, 3, -1, -1, -1].
+        let dark = try appIcon(images: [
+            ("Icon_1024x1024.png", "iphone", nil),
+            ("Icon_1024x1024.png", "ipad", nil),
+            ("Dark Icon.png", "iphone", "dark"),
+            ("Dark Icon.png", "ipad", "dark"),
+        ])
+        let darkDescriptor = try #require(BitmapKeys.descriptor(
+            forAsset: "AppIcon", renditions: dark, keyTokenCount: 9))
+        #expect(darkDescriptor.encode() == bytes(
+            "01000000000000002800000009000000ffffffff0100000002000000060000000100000003000000ffffffffffffffffffffffff"))
+
+        // tint oracle (base+tinted, 10-token KEYFORMAT): 56 bytes,
+        // [1, 0, 0x2C, 10, -1, 1, 2, 6, 1, 3, 3, -1, -1, -1].
+        let tinted = try appIcon(images: [
+            ("Icon_1024x1024.png", "iphone", nil),
+            ("Icon_1024x1024.png", "ipad", nil),
+            ("Tint Icon.png", "iphone", "tinted"),
+            ("Tint Icon.png", "ipad", "tinted"),
+        ])
+        let tintDescriptor = try #require(BitmapKeys.descriptor(
+            forAsset: "AppIcon", renditions: tinted, keyTokenCount: 10))
+        let tintEncoded = tintDescriptor.encode()
+        let tintExpected = bytes(
+            "01000000000000002c0000000a000000ffffffff010000000200000006000000010000000300000003000000ffffffffffffffffffffffff")
+        if tintEncoded != tintExpected {
+            Issue.record("tint descriptor mismatch")
+            let gotHex = tintEncoded.map { String(format: "%02x", $0) }.joined()
+            let expHex = tintExpected.map { String(format: "%02x", $0) }.joined()
+            print("got      " + gotHex)
+            print("expected " + expHex)
         }
     }
 
@@ -266,6 +350,23 @@ struct AppIconSingleSizeAppearancesTests {
             leafBlockID: 7, blockSize: 64, pathCount: 2, isInternal: false,
             keyTrailerLength: 2)
         #expect([UInt8](inlineHeader[21..<25]) == [0, 0, 0, 2])
+
+        // actool's rule across oracle cars: FACETKEYS with one uniform key
+        // ("AppIcon", 7 bytes) inlines it (trailer 7, leaf 4096 + 7); with
+        // variable-length facet names (NNW) it goes external with trailer
+        // -1 (leaf exactly 4096). Both shapes reproduced above by
+        // inlineKeys true/false; the trailer byte encodes which.
+        let singleFacet: [(key: Data, value: Data)] = [
+            (key: Data("AppIcon".utf8), value: Data([0, 0, 0, 0, 3, 0, 1, 0, 85, 0, 2, 0, 220, 0, 17, 0, 193, 26])),
+        ]
+        let facetLeaf = BOMTree.leafExternal(
+            sorted: singleFacet, keyBlockIDs: [8], valueBlockIDs: [9],
+            blockSize: 4096, inlineKeys: true)
+        #expect(facetLeaf.count == 4096 + 7)
+        let facetHeader = BOMTree.header(
+            leafBlockID: 7, blockSize: 4096, pathCount: 1, isInternal: false,
+            keyTrailerLength: 7)
+        #expect([UInt8](facetHeader[21..<25]) == [0, 0, 0, 7])
     }
 }
 
@@ -274,3 +375,4 @@ extension Array {
         stride(from: 0, to: count, by: size).map { Array(self[$0..<Swift.min($0 + size, count)]) }
     }
 }
+

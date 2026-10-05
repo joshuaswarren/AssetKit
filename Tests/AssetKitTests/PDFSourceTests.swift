@@ -153,7 +153,7 @@ struct PDFSourceTests {
     @Test("BITMAPKEYS marker is 0x0e for preserving sets and 0x0f for others")
     func bitmapKeysMarker() throws {
         func marker(for renditions: [Rendition]) -> UInt32 {
-            let descriptor = BitmapKeys.descriptor(forAsset: "Pdf", renditions: renditions)!
+            let descriptor = BitmapKeys.descriptor(forAsset: "Pdf", renditions: renditions, keyTokenCount: 9)!
             let bytes = [UInt8](descriptor.encode())
             return UInt32(bytes[24]) | (UInt32(bytes[25]) << 8)
                 | (UInt32(bytes[26]) << 16) | (UInt32(bytes[27]) << 24)

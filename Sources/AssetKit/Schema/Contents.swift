@@ -214,6 +214,14 @@ struct ColorSetContents: Codable, Sendable {
             /// extended values beyond [0,1] included), 8-bit hex ("0xFF")
             /// and 0-255 decimal ("255"). A decimal point means a direct
             /// float; a plain integer means the 0-255 form.
+            ///
+            /// actool parses every component string as a Float32 and widens
+            /// to Double before any arithmetic (verified on the fraction
+            /// oracle: "1.100" -> 1.100000023841858, "0.123" ->
+            /// 0.12300000339746475) and divides integer forms by 255 in
+            /// Double afterwards ("235" -> 235/255 = 0.9215686274509803,
+            /// exact). Reproduce that order: quantize the parsed value
+            /// first, divide later.
             func parse(_ s: String) throws -> Double {
                 if s.hasPrefix("0x") || s.hasPrefix("0X") {
                     let hex = String(s.dropFirst(2))
@@ -225,7 +233,8 @@ struct ColorSetContents: Codable, Sendable {
                 guard let n = Double(s) else {
                     throw XCAssetCompilerError.invalidColorComponent(s)
                 }
-                return s.contains(".") || s.contains("e") || s.contains("E") ? n : n / 255
+                let widened = Double(Float(n))
+                return s.contains(".") || s.contains("e") || s.contains("E") ? widened : widened / 255
             }
         }
     }

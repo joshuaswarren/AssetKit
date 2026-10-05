@@ -209,11 +209,11 @@ enum CSIWriter {
     }
 
     /// 'COLR' as an LE multi-char constant (file bytes R,L,O,C), version 1,
-    /// colorSpaceID, component count, then Float64 components (each
-    /// quantized to Float32, as actool does). A system color is a
-    /// placeholder in that system color's own space (colorspaceID with the
-    /// 0x100 system flag, see `SystemColorPlaceholders`) followed by a
-    /// second COLR record holding the name (length + UTF-8).
+    /// colorSpaceID, component count, then Float64 components. Components
+    /// arrive in actool's final precision (parsed through Float32 in
+    /// `Contents.Components.parse`), so they are written verbatim; the
+    /// system-color fallback below keeps its own Float32 pass because its
+    /// placeholder decimals were transcribed from Apple's output.
     private static func colorBody(body: ColorBody) -> Data {
         var w = ByteWriter()
         w.writeLE(UInt32(0x434F_4C52))
@@ -233,9 +233,7 @@ enum CSIWriter {
         w.writeLE(UInt32(body.colorSpaceID))    // colorSpaceID with flag bits
         w.writeLE(UInt32(body.components.count))
         for component in body.components {
-            // actool quantizes each component to Float32 before storing it
-            // in the Float64 slot (Xcode 27.0 writes 1.1 as 0x3FF19999A0000000).
-            w.writeLE(Double(Float(component)).bitPattern)
+            w.writeLE(component.bitPattern)
         }
         return w.data
     }
