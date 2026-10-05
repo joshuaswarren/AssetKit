@@ -58,6 +58,7 @@ public enum IconComposerCompiler {
         var translation: (Double, Double)
         var fills: [[String: Any]]   // fill-specializations, verbatim
         var blends: [[String: Any]]  // blend-mode-specializations, verbatim
+        var glass: Bool
     }
 
     struct Group {
@@ -92,7 +93,8 @@ public enum IconComposerCompiler {
                     scale: position["scale"] as? Double ?? 1,
                     translation: (translation.first ?? 0, translation.count > 1 ? translation[1] : 0),
                     fills: layer["fill-specializations"] as? [[String: Any]] ?? [],
-                    blends: layer["blend-mode-specializations"] as? [[String: Any]] ?? []))
+                    blends: layer["blend-mode-specializations"] as? [[String: Any]] ?? [],
+                    glass: layer["glass"] as? Bool ?? false))
             }
             let shadow = group["shadow"] as? [String: Any]
             let blur = (group["blur-material"] as? NSNumber)?.doubleValue
@@ -270,15 +272,57 @@ public enum IconComposerCompiler {
         pixel.blend(source: (q(c[0]), q(c[1]), q(c[2])), sourceAlpha: sa, lighten: lighten)
     }
 
+    /// Liquid Glass wash, measured from actool 27.0 controlled variants
+    /// (glass-lab/wash-profiles.json): inside the layer's glass region (the
+    /// content box inset by 10% per side) the baked pre-render mixes each
+    /// pixel toward white with a weight W(s) — a top-rim glow, a body
+    /// gradient rising toward the bottom, and a bottom-edge glow. W depends
+    /// on the group's translucency and the appearance. Specular and
+    /// blur-material do not affect the pre-render (verified: 0.000 mean).
+    static func washValue(_ tables: [[Double]], _ translucency: Float, _ s: Double) -> Double {
+        guard s >= 0, s <= 1 else { return 0 }
+        let tr = Double(max(0, min(1, translucency)))
+        func at(_ table: [Double]) -> Double {
+            let x = s * 110
+            let i = min(109, Int(x))
+            let f = x - Double(i)
+            return table[i] + (table[i + 1] - table[i]) * f
+        }
+        if tr >= 1 { return at(tables[3]) }
+        if tr > 0.25 {
+            // piecewise-linear between the measured 0.25/0.5/0.75/1.0 tables
+            let lower = Int((tr - 0.25) / 0.25) // 0, 1, 2
+            let f = (tr - (0.25 + Double(lower) * 0.25)) / 0.25
+            let a = at(tables[lower]), b = at(tables[lower + 1])
+            return a + (b - a) * f
+        }
+        // glass-only material curve blended toward the 0.25 table
+        let f = tr / 0.25
+        let a = at(tables[4]), b = at(tables[0])
+        return a + (b - a) * f
+    }
+
+    static func washTables(_ appearance: Appearance?) -> [[Double]] {
+        appearance == .dark ? [GlassWash.dark[0], GlassWash.dark[1], GlassWash.dark[2], GlassWash.dark[3], GlassWash.g0Dark]
+            : (appearance == .tinted ? [GlassWash.tinted[0], GlassWash.tinted[1], GlassWash.tinted[2], GlassWash.tinted[3], GlassWash.g0Tinted]
+            : [GlassWash.light[0], GlassWash.light[1], GlassWash.light[2], GlassWash.light[3], GlassWash.g0Light])
+    }
+
     /// Draws one layer image at its scale/translation with an optional fill
     /// masked by the image alpha, blended per the layer's blend mode.
+    /// `wash` (level-indexed tables + group translucency) applies the Liquid
+    /// Glass white-mix inside the glass region (content box inset 10%/side).
     static func drawLayer(
         _ image: LoadedImage, fill: Fill?, scale: Double,
-        translation: (Double, Double), lighten: Bool, into canvas: inout [Pixel]
+        translation: (Double, Double), lighten: Bool,
+        wash: (tables: [[Double]], translucency: Float)? = nil,
+        weights: UnsafeMutablePointer<Float>? = nil, into canvas: inout [Pixel]
     ) {
         let side = max(1, Int((Double(canvasSide) * scale).rounded()))
         let x0 = (canvasSide - side) / 2 + Int(translation.0.rounded())
         let y0 = (canvasSide - side) / 2 + Int(translation.1.rounded())
+        let regionTop = Double(y0) + Double(side) / 10
+        let regionHeight = Double(side) * 0.8
         for y in 0..<side {
             let canvasY = y0 + y
             guard canvasY >= 0, canvasY < canvasSide else { continue }
@@ -286,6 +330,8 @@ public enum IconComposerCompiler {
             let sy0 = max(0, min(image.width - 1, Int(sy.rounded(.down))))
             let sy1 = max(0, min(image.width - 1, sy0 + 1))
             let fy = max(0, min(1, sy - Double(sy0)))
+            let s = (Double(canvasY) + 0.5 - regionTop) / regionHeight
+            let w = wash.map { washValue($0.tables, $0.translucency, s) } ?? 0
             for x in 0..<side {
                 let canvasX = x0 + x
                 guard canvasX >= 0, canvasX < canvasSide else { continue }
@@ -301,6 +347,18 @@ public enum IconComposerCompiler {
                     paint(color: sample(fill, t: t), alpha: Double(p.a) / 255, lighten: lighten, into: &out)
                 } else {
                     out.blend(source: (p.r, p.g, p.b), sourceAlpha: p.a, lighten: lighten)
+                }
+                if w != 0 {
+                    let cov = Double(p.a) / 255
+                    if let weights {
+                        let idx = canvasY * canvasSide + canvasX
+                        weights[idx] = max(weights[idx], Float(w * cov))
+                    } else {
+                        func mixWash(_ v: UInt8) -> UInt8 {
+                            UInt8((Double(v) + w * (255 - Double(v)) * cov).rounded())
+                        }
+                        out = Pixel(r: mixWash(out.r), g: mixWash(out.g), b: mixWash(out.b), a: out.a)
+                    }
                 }
                 canvas[canvasY * canvasSide + canvasX] = out
             }
@@ -334,23 +392,34 @@ public enum IconComposerCompiler {
         if let background, !tinted {
             paintBackground(background, into: &canvas)
         }
+        // Tinted applies the glass wash after the grayscale reduction (the
+        // measured tables are effects on the final tinted bitmap).
+        var washWeights: [Float] = []
+        if tinted { washWeights = [Float](repeating: 0, count: canvasSide * canvasSide) }
+        let tables = washTables(appearance)
         for group in model.groups {
+            let tr = resolveTranslucency(group.translucency, appearance: appearance)
             for layer in group.layers {
                 guard let image = images[layer.imageName] else { continue }
                 let blendValue = specializedValue(layer.blends, appearance: appearance) as? String
+                let wash = layer.glass
+                    ? (tables: tables, translucency: tr) as (tables: [[Double]], translucency: Float)? : nil
                 drawLayer(
                     image, fill: resolveFill(layer.fills, appearance: appearance),
                     scale: layer.scale, translation: layer.translation,
-                    lighten: blendValue == "lighten", into: &canvas)
+                    lighten: blendValue == "lighten", wash: wash,
+                    weights: tinted ? UnsafeMutablePointer(mutating: washWeights) : nil,
+                    into: &canvas)
             }
         }
         var out = [UInt8]()
         out.reserveCapacity(canvas.count * 4)
-        for p in canvas {
+        for (idx, p) in canvas.enumerated() {
             if tinted {
                 let luma = (0.299 * Double(p.r) + 0.587 * Double(p.g) + 0.114 * Double(p.b))
                     * Double(p.a) / 255
-                let g = UInt8(luma.rounded())
+                let w = Double(washWeights[idx])
+                let g = UInt8((luma + w * (255 - luma)).rounded())
                 out.append(contentsOf: [g, g, g, 255])
             } else {
                 out.append(contentsOf: [p.b, p.g, p.r, 255])
