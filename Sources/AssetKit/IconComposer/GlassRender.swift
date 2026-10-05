@@ -494,6 +494,7 @@ enum GlassRender {
                 let rect = C.placedRect(image: image, layer: layer, group: group)
                 let (ox, oy, pw, ph) = (rect.ox, rect.oy, rect.w, rect.h)
                 var placed = place(image, size: (pw, ph), origin: (ox, oy))
+                let blend = C.specializedValue(layer.blends, appearance: appearance) as? String
                 if let fill = C.resolveFill(layer.fills, appearance: appearance) {
                     for y in 0..<n {
                         let t = sat((Float(y - oy) + 0.5) / Float(ph))
@@ -508,8 +509,26 @@ enum GlassRender {
                         }
                         for x in 0..<n {
                             let i = y * n + x
-                            let a = placed.a[i] * c.3
-                            placed.r[i] = c.0 * a; placed.g[i] = c.1 * a; placed.b[i] = c.2 * a; placed.a[i] = a
+                            let ia = placed.a[i]
+                            if blend == "lighten" || blend == "screen", ia > 1e-5 {
+                                let ir = placed.r[i] / ia, ig = placed.g[i] / ia, ib = placed.b[i] / ia
+                                let sa = c.3
+                                let br: Float, bg: Float, bb: Float
+                                if blend == "lighten" {
+                                    br = max(ir, c.0); bg = max(ig, c.1); bb = max(ib, c.2)
+                                } else {
+                                    br = 1 - (1 - ir) * (1 - c.0)
+                                    bg = 1 - (1 - ig) * (1 - c.1)
+                                    bb = 1 - (1 - ib) * (1 - c.2)
+                                }
+                                let rr = (1 - sa) * ir + sa * br
+                                let rg = (1 - sa) * ig + sa * bg
+                                let rb = (1 - sa) * ib + sa * bb
+                                placed.r[i] = rr * ia; placed.g[i] = rg * ia; placed.b[i] = rb * ia
+                            } else {
+                                let a = ia * c.3
+                                placed.r[i] = c.0 * a; placed.g[i] = c.1 * a; placed.b[i] = c.2 * a; placed.a[i] = a
+                            }
                         }
                     }
                 }
@@ -552,7 +571,7 @@ enum GlassRender {
                     shadow.g = gaussian(shadow.g, sigma: 22.4)
                     shadow.b = gaussian(shadow.b, sigma: 22.4)
                 }
-                let alpha: Float = tinted ? 0.05 : (colored ? Float(group.shadowOpacity) * 0.5 : Float(group.shadowOpacity) * 0.1)
+                let alpha: Float = Float(group.shadowOpacity) * (tinted ? 0.1 : (colored ? 0.5 : 0.1))
                 plusDarker(&canvas, shadow, alpha: alpha)
             }
             let shape = sdf(content.a)
@@ -560,7 +579,7 @@ enum GlassRender {
                 let r = boxBlur(canvas.r, sigma: 64), g = boxBlur(canvas.g, sigma: 64), b = boxBlur(canvas.b, sigma: 64)
                 for i in 0..<count where shape.d[i] >= 0 { canvas.r[i] = r[i]; canvas.g[i] = g[i]; canvas.b[i] = b[i] }
             }
-            let tr = tinted ? 0 : C.resolveTranslucency(group.translucency, appearance: appearance)
+            let tr = C.resolveTranslucency(group.translucency, appearance: appearance)
             over(&canvas, content, mask: tr > 0 ? translucencyMask(shape.d, translucency: tr, bounds: bounds) : nil)
             if glass {
                 let field = sdf(glassImage.a)
