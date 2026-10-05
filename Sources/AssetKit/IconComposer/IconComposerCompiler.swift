@@ -129,7 +129,7 @@ public enum IconComposerCompiler {
                 scale: (groupPosition["scale"] as? NSNumber)?.doubleValue ?? 1,
                 translation: (groupTranslation.first ?? 0, groupTranslation.count > 1 ? groupTranslation[1] : 0),
                 blurStrength: blur ?? 0,
-                shadowStyle: shadow == nil ? 0 : 2,
+                shadowStyle: shadow == nil ? 0 : ((shadow?["kind"] as? String) == "neutral" ? 3 : 2),
                 shadowOpacity: (shadow?["opacity"] as? NSNumber)?.doubleValue ?? 0,
                 shadowKind: shadow?["kind"] as? String,
                 translucency: translucency))
@@ -445,7 +445,7 @@ public enum IconComposerCompiler {
             let facet = index == 0 ? "\(input.name)/Group" : "\(input.name)/Group \(index + 1)"
             groupFacets.append((facet, UInt16(FacetKeys.nameHash(facet) & 0xFFFF), group))
             for appearance in appearances {
-                let layers = group.layers.map { layer -> IconGroupLayer in
+                let layers = group.layers.reversed().map { layer -> IconGroupLayer in
                     let image = images[layer.imageName]!
                     let rect = placedRect(image: image, layer: layer, group: group)
                     return IconGroupLayer(
