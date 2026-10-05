@@ -268,6 +268,19 @@ enum GlassRender {
         return g
     }
 
+    /// Opaque pixels are light when Rec.709 luma exceeds 0.8. Alt2 Path.svg
+    /// is #e3d9fa; saturated brand colors stay below this.
+    static func lightShape(_ image: IconComposerCompiler.LoadedImage) -> Bool {
+        var sum: Float = 0
+        var n = 0
+        for p in image.pixels where p.a > 16 {
+            let r = Float(p.r) / 255, g = Float(p.g) / 255, b = Float(p.b) / 255
+            sum += 0.2126 * r + 0.7152 * g + 0.0722 * b
+            n += 1
+        }
+        return n > 0 && sum / Float(n) > 0.8
+    }
+
     /// Signed distance (px, positive inside) of alpha >= 0.5, and the outward unit normal.
     static func sdf(_ alpha: [Float]) -> (d: [Float], nx: [Float], ny: [Float]) {
         let inside = alpha.map { $0 >= 0.5 }
@@ -495,7 +508,12 @@ enum GlassRender {
                 let rect = C.placedRect(image: image, layer: layer, group: group)
                 let (ox, oy, pw, ph) = (rect.ox, rect.oy, rect.w, rect.h)
                 var placed = place(image, size: (pw, ph), origin: (ox, oy))
-                if let fill = C.resolveFill(layer.fills, appearance: appearance) {
+                var fill = C.resolveFill(layer.fills, appearance: appearance)
+                if fill == nil, layer.fills.isEmpty, appearance == .dark, lightShape(image),
+                   let inherited = C.resolveFill(model.fills, appearance: nil) {
+                    fill = inherited
+                }
+                if let fill {
                     for y in 0..<n {
                         let t = sat((Float(y - oy) + 0.5) / Float(ph))
                         let c: (Float, Float, Float, Float)
@@ -536,26 +554,26 @@ enum GlassRender {
                 maxY = max(maxY, oy + ph)
             }
             if minY < maxY { let k: Float = 1026 / 1024; bounds = (Float(minY) * k, Float(maxY - minY) * k) }
-            // shadow: the group image (or black) blurred 22.4 at +16/+16, plus-darker
-            if group.shadowStyle != 0 {
-                let colored = !tinted && group.shadowKind == "layer-color"
-                var shadow = Image()
-                for y in 16..<n {
-                    for x in 16..<n {
-                        let s = (y - 16) * n + (x - 16), d = y * n + x
-                        shadow.a[d] = content.a[s]
-                        if colored { shadow.r[d] = content.r[s]; shadow.g[d] = content.g[s]; shadow.b[d] = content.b[s] }
-                    }
+            // No shadow in the icon still draws neutral black plus-darker at 0.05.
+            // Explicit layer-color keeps opacity * 0.5. Neutral stays black at opacity * 0.1.
+            let colored = group.shadowStyle != 0 && !tinted && group.shadowKind == "layer-color"
+            let opacity = group.shadowStyle != 0 ? Float(group.shadowOpacity) : 0.5
+            var shadow = Image()
+            for y in 16..<n {
+                for x in 16..<n {
+                    let s = (y - 16) * n + (x - 16), d = y * n + x
+                    shadow.a[d] = content.a[s]
+                    if colored { shadow.r[d] = content.r[s]; shadow.g[d] = content.g[s]; shadow.b[d] = content.b[s] }
                 }
-                shadow.a = gaussian(shadow.a, sigma: 22.4)
-                if colored {
-                    shadow.r = gaussian(shadow.r, sigma: 22.4)
-                    shadow.g = gaussian(shadow.g, sigma: 22.4)
-                    shadow.b = gaussian(shadow.b, sigma: 22.4)
-                }
-                let alpha: Float = Float(group.shadowOpacity) * (tinted ? 0.1 : (colored ? 0.5 : 0.1))
-                plusDarker(&canvas, shadow, alpha: alpha)
             }
+            shadow.a = gaussian(shadow.a, sigma: 22.4)
+            if colored {
+                shadow.r = gaussian(shadow.r, sigma: 22.4)
+                shadow.g = gaussian(shadow.g, sigma: 22.4)
+                shadow.b = gaussian(shadow.b, sigma: 22.4)
+            }
+            let alpha: Float = colored ? opacity * 0.5 : opacity * 0.1
+            plusDarker(&canvas, shadow, alpha: alpha)
             let shape = sdf(content.a)
             if group.blurStrength > 0 {
                 let r = boxBlur(canvas.r, sigma: 64), g = boxBlur(canvas.g, sigma: 64), b = boxBlur(canvas.b, sigma: 64)

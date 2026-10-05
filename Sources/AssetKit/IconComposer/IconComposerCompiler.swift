@@ -448,6 +448,12 @@ public enum IconComposerCompiler {
                 let layers = group.layers.reversed().map { layer -> IconGroupLayer in
                     let image = images[layer.imageName]!
                     let rect = placedRect(image: image, layer: layer, group: group)
+                    var name = fillName(layer, appearance)
+                    if name == nil, layer.fills.isEmpty, appearance == .dark,
+                       GlassRender.lightShape(image),
+                       let inherited = resolveFill(model.fills, appearance: nil) {
+                        name = fillSlot(inherited)
+                    }
                     return IconGroupLayer(
                         imageFacetName: "",
                         imageIdentifier: imageIdentifiers[facetStem(layer.imageName)] ?? 0,
@@ -456,7 +462,7 @@ public enum IconComposerCompiler {
                         width: UInt32(rect.w), height: UInt32(rect.h),
                         blendMode: blendWord(layer, appearance),
                         opacity: resolveOpacity(layer.opacities, appearance: appearance),
-                        fillName: fillName(layer, appearance),
+                        fillName: name,
                         hasLighting: layer.glass)
                 }
                 groupRenditions.append(Rendition(

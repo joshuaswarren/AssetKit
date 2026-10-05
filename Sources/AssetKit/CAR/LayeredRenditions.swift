@@ -234,7 +234,13 @@ extension CSIWriter {
                 fill.writeLE(UInt32(0))
                 fill.writeLE(UInt32(layer.hasLighting ? 1 : 0))
                 fill.writeLE(UInt32(0))
-                fill.write([0x01])
+                if let fillName = layer.fillName {
+                    let bytes = Array((fillName + "\0").utf8)
+                    fill.writeLE(UInt32(bytes.count))
+                    fill.write(bytes)
+                } else {
+                    fill.write([0x01])
+                }
             }
             fill.writeZeros(4)
         }
