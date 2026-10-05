@@ -136,7 +136,8 @@ public enum IconComposerCompiler {
         }
         var fills = json["fill-specializations"] as? [[String: Any]] ?? []
         if fills.isEmpty, let fill = json["fill"] {
-            fills = [["value": fill]]
+            // A bare fill is the light background. Dark with no specialization is system-dark.
+            fills = [["value": fill], ["appearance": "dark", "value": "system-dark"]]
         }
         return IconModel(fills: fills, groups: groups)
     }
