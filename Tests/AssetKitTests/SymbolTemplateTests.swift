@@ -98,14 +98,9 @@ struct SymbolTemplateTests {
         let ours = CSIWriter.symbolCached(body: body, scaleFactor: 100)
         let apple = try Data(contentsOf: Self.fixture.appendingPathComponent("apple-cached-s1-i0.csi.bin"))
         #expect(ours.count == apple.count)
-        // Byte-identical except the atlas placement: Apple's packer emits
-        // its own (x, y); ours matches our own atlas layout. The INLK
-        // header sits at 184 + 28 (TVL 1001) + 36 (TVL 1003) + 8 = 256;
-        // magic 4, version 4, x 4, y 4.
-        var o = [UInt8](ours)
-        var a = [UInt8](apple)
-        for i in 264..<272 { o[i] = 0; a[i] = 0 }
-        #expect(o == a)
+        // Fully byte-identical: the single-shelf width-desc atlas layout
+        // reproduces Apple's placements for this template.
+        #expect([UInt8](ours) == [UInt8](apple))
     }
 
     @Test("Packed atlas CSI carries the dmp2 pixel record")

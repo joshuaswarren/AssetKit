@@ -90,6 +90,11 @@ enum KeyFormat {
             if case .bitmap(let body) = rendition.body, body.kind == .appIcon {
                 return true
             }
+            // Symbol cache entries key their Glyph Cached Index in the
+            // dimension2 slot (Apple symbol oracle: 12-attribute format).
+            if case .symbolCached = rendition.body {
+                return true
+            }
             return false
         }
         let usesAppearance = renditions.contains { $0.appearance?.keyToken != nil }

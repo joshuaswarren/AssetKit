@@ -34,31 +34,25 @@ enum SymbolRenderer {
     /// (0x3FBE2FFA, 0x3F94C000).
     static let leftMarginPoints = Float(bitPattern: 0x3FBE2FFA)
     static let rightMarginPoints = Float(bitPattern: 0x3F94C000)
-    /// Deterministic atlas layout for the three cached bitmaps of one
-    /// scale: shelf packing, widest first, 2 px padding. Apple's own packer
-    /// produces different placements and atlas sizes (CoreUI-internal);
-    /// ours is self-consistent — the INLK links and the atlas pixels agree.
+    /// Atlas layout for the three cached bitmaps of one scale: one shelf,
+    /// widest first, 2 px padding — Apple's observed single-symbol symbol
+    /// atlas shape (60x34, 112x64, 164x94 in the full-NNW oracle), whose
+    /// placements (2,2)/(24,2)/(43,2)... it reproduces exactly.
     static func atlasLayout(dims: [(width: UInt32, height: UInt32)])
         -> (placements: [(x: UInt32, y: UInt32)], atlasWidth: UInt32, atlasHeight: UInt32)
     {
         let pad: UInt32 = 2
+        let order = dims.indices.sorted { dims[$0].width > dims[$1].width }
         var x = pad
-        var y = pad
-        var shelfHeight: UInt32 = 0
-        var placements: [(x: UInt32, y: UInt32)] = []
-        var maxX = pad
-        for d in dims {
-            if shelfHeight != 0, x + d.width + pad > maxX || d.height > shelfHeight {
-                y += shelfHeight + pad
-                x = pad
-                shelfHeight = 0
-            }
-            placements.append((x, y))
-            x += d.width + pad
-            maxX = max(maxX, x)
-            shelfHeight = max(shelfHeight, d.height)
+        var placements = [(x: UInt32, y: UInt32)](
+            repeating: (0, 0), count: dims.count)
+        var maxHeight: UInt32 = 0
+        for i in order {
+            placements[i] = (x, pad)
+            x += dims[i].width + pad
+            maxHeight = max(maxHeight, dims[i].height)
         }
-        return (placements, maxX, y + shelfHeight + pad)
+        return (placements, x, maxHeight + 2 * pad)
     }
 
     static func renditions(for set: LoadedSymbolSet, svgRasterizer: any SVGRasterizer) throws -> [Rendition] {
@@ -166,7 +160,7 @@ enum SymbolRenderer {
                 out.append(Rendition(
                     name: set.name,
                     idiom: .universal,
-                    scale: Scale(rawValue: "x\(factor)") ?? .x1,
+                    scale: [1: .x1, 2: .x2, 3: .x3][factor]!,
                     deploymentTarget: deploymentTargetToken,
                     body: .symbolCached(cached)
                 ))
@@ -181,7 +175,7 @@ enum SymbolRenderer {
             out.append(Rendition(
                 name: packed.renditionName,
                 idiom: .universal,
-                scale: Scale(rawValue: "x\(factor)") ?? .x1,
+                scale: [1: .x1, 2: .x2, 3: .x3][factor]!,
                 deploymentTarget: deploymentTargetToken,
                 body: .symbolPacked(packed)
             ))
