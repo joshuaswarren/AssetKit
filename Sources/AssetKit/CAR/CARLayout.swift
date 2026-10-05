@@ -71,6 +71,11 @@ struct CARLayout {
         // the same asset and only ever accompany .appIcon bitmap renditions,
         // which classify the facet first anyway.
         case .multiSized: return .appIcon
+        // Icon Composer structured renditions carry their own facet kinds
+        // (IceCubes oracle: part 246 groups, part 247 gradients).
+        case .iconGroup: return .iconGroup
+        case .namedGradient: return .namedGradient
+        case .iconImageStack: return .appIcon
         // Preserved-source renditions live in the `.image` category at every
         // layer above the CSI body: FACETKEYS, BITMAPKEYS, and the rendition
         // key all reuse the same element/part as a generic PNG imageset.

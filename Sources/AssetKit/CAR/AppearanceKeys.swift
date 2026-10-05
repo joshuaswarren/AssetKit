@@ -18,6 +18,10 @@ import Foundation
 enum AppearanceKeys {
     static let any: UInt16 = 0
     static let dark: UInt16 = 1
+    /// Explicit light-appearance id. Icon Composer layered renditions key
+    /// their light variants at 4 ("UIAppearanceLight", IceCubes oracle
+    /// APPEARANCEKEYS/rendition keys) while light app-icon bitmaps stay 0.
+    static let light: UInt16 = 4
     /// Tinted home-screen icon variants. Name and id verified against the
     /// NNW single-size oracle car's APPEARANCEKEYS tree
     /// ("ISAppearanceTintable" -> 0x000A).
@@ -37,6 +41,12 @@ enum AppearanceKeys {
             rows.append(BOMTree.Entry(
                 key: Data("UIAppearanceDark".utf8),
                 value: Self.encodeID(dark)
+            ))
+        }
+        if used.contains(light) {
+            rows.append(BOMTree.Entry(
+                key: Data("UIAppearanceLight".utf8),
+                value: Self.encodeID(light)
             ))
         }
         if used.contains(tintable) {

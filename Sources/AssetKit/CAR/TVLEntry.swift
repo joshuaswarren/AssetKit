@@ -62,6 +62,10 @@ enum TVLEntry {
 
     /// Type 1019 (12-byte value): symbol glyph flags, always (1, 0, 0).
     case glyphSizes
+    /// Escape hatch for the Icon Composer layered renditions (stacks,
+    /// groups, gradients), whose TVL vocabularies are their own: the bytes
+    /// are emitted verbatim, layout documented at the encoding site.
+    case rawBytes(tag: UInt32, payload: [UInt8])
 
     func encode(into w: inout ByteWriter) {
         switch self {
@@ -153,6 +157,10 @@ enum TVLEntry {
             w.writeLE(UInt32(1))
             w.writeLE(UInt32(0))
             w.writeLE(UInt32(0))
+        case .rawBytes(let tag, let payload):
+            w.writeLE(tag)
+            w.writeLE(UInt32(payload.count))
+            w.write(payload)
         }
     }
 }

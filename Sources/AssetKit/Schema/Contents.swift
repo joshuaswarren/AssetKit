@@ -78,17 +78,24 @@ struct Appearance: Codable, Sendable, Hashable {
         appearance == "luminosity" && value == "tinted"
     }
 
+    var lightLuminosity: Bool {
+        appearance == "luminosity" && value == "light"
+    }
+
     /// The id rendition keys carry in their `appearance` attribute, and the
     /// row this variant needs in APPEARANCEKEYS. Verified against the NNW
     /// single-size oracle car: dark icons key at 1 (UIAppearanceDark),
-    /// tinted icons at 10 (ISAppearanceTintable).
+    /// tinted icons at 10 (ISAppearanceTintable). Icon Composer layered
+    /// renditions key light variants explicitly at 4 (IceCubes oracle).
     var keyToken: UInt16? {
         if darkLuminosity { return AppearanceKeys.dark }
         if tintedLuminosity { return AppearanceKeys.tintable }
+        if lightLuminosity { return AppearanceKeys.light }
         return nil
     }
 
     static let dark = Appearance(appearance: "luminosity", value: "dark")
+    static let light = Appearance(appearance: "luminosity", value: "light")
     static let tinted = Appearance(appearance: "luminosity", value: "tinted")
 }
 
