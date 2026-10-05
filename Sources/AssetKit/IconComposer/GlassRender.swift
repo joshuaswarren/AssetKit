@@ -426,7 +426,7 @@ enum GlassRender {
                 a[i] = conic(specA, -2.35619, x, y) * 0.6 * band
                 b[i] = conic(specB, 0.785398, x, y) * 0.4 * band
             }
-            border[i] = sat((8 / 3) / 2 - abs(dist) + 0.5)
+            border[i] = sat((Float(8) / 3) / 2 - abs(dist) + 0.5)
         }
         return (stroke, border, a, b)
     }()
