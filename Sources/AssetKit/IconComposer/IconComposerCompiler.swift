@@ -691,8 +691,11 @@ public enum IconComposerCompiler {
                     }
                 }
                 let outAlpha = a / count
+                // mean(premultiplied channel) / mean(alpha): straight color.
+                // (Multiplying by 255 here saturated opaque content to white —
+                // the all-white loose-PNG bug, reproduced in isolation.)
                 let unpre: (Int) -> UInt8 = { channel in
-                    outAlpha == 0 ? 0 : UInt8(min(255, (channel / count) * 255 / outAlpha))
+                    outAlpha == 0 ? 0 : UInt8(min(255, (channel / count) / outAlpha))
                 }
                 out.append(PNG.RGBA(unpre(r), unpre(g), unpre(b), UInt8(outAlpha)))
             }
