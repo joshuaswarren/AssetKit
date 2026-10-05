@@ -143,10 +143,12 @@ struct RenditionKey: Hashable, Sendable {
             self.dimension2 = 0
             switch body.format {
             case .svg:
-                // SVG source renditions occupy the dedicated vector-source
-                // part; bitmap variants rasterised from the SVG (when the
-                // compiler emits them) would use Part.image instead.
-                self.part = Part.vectorSource.rawValue
+                // Imageset SVG lives on the vector-source part; the rasters
+                // sit on Part.image. Icon Composer layers have no rasters, so
+                // the vector itself is keyed as Part.image (oracle 181).
+                self.part = rendition.iconComposerSource
+                    ? Part.image.rawValue
+                    : Part.vectorSource.rawValue
             case .pdf(let preservesVector):
                 // Preserving imagesets pack the PDF into the vector-source
                 // part at scale 1, like SVG. Non-preserving ones keep the
