@@ -398,10 +398,10 @@ enum GlassRender {
         return out
     }()
 
-    /// Chiclet rim from the recorded display list (icr9d `010-renderImage.xml`), not a
-    /// per-icon residual. Inner stroke and two conic strokes are a 44 px stroke inverse-clipped
-    /// to the continuous rounded rect inset by 22. The border is an 8/3 px stroke, inverse-clipped
-    /// by group images. Tinted draws none of this.
+
+    /// Chiclet rim from icr9d `010-renderImage.xml`. The 44 px stroke is full on the outer
+    /// half and fades to 0 at 22 px inside (Alt1 light diagonal). Conic draws carry alpha 0.6
+    /// and 0.4. No residual table: the same stroke has to work on a custom background.
     static let rimField: (stroke: [Float], border: [Float], specA: [Float], specB: [Float]) = {
         let specA: [Float] = [1, 0.975586, 0.903809, 0.787109, 0.630371, 0.438965, 0.220703, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.220703, 0.438965, 0.630371, 0.787109, 0.903809, 0.975586, 1]
         let specB: [Float] = [1, 0.966797, 0.868164, 0.708008, 0.492676, 0.230225, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.230225, 0.492676, 0.708008, 0.868164, 0.966797, 1]
@@ -416,13 +416,14 @@ enum GlassRender {
         var stroke = [Float](repeating: 0, count: count)
         var border = stroke, a = stroke, b = stroke
         let d = chicletDistance
+        let half: Float = 22
         for i in 0..<count {
             let dist = d[i]
             guard dist > -24, dist < 24 else { continue }
             let y = i / n, x = i - y * n
-            // Centered 44 px stroke reads as a tent (1 on the contour, 0 at ±22), not a
-            // filled band. A filled band is ~flat 149 on dark; Apple falls 134→49 over 22 px.
-            let band = sat(1 - abs(dist) / 22)
+            let outer = sat(half + dist + 0.5)
+            let inner: Float = dist <= 0 ? 1 : sat((half - dist) / half)
+            let band = min(outer, inner)
             stroke[i] = band
             if band > 0 {
                 a[i] = conic(specA, -2.35619, x, y) * 0.6 * band
@@ -442,11 +443,7 @@ enum GlassRender {
         let borderAlpha: Float = dark ? 0.15 : 0.12
         let borderColor: Float = dark ? 1 : 0
         for i in 0..<count {
-            // Baked dark PNG is darker than this source-over (lab_base top excess
-            // ratio 0.75, bottom 0.84). Light matches at 1. One dark scale, not a table.
-            let specScale: Float = dark ? 0.80 : 1
-            for spec0 in [rim.specA[i], rim.specB[i]] where spec0 > 0 {
-                let spec = spec0 * specScale
+            for spec in [rim.specA[i], rim.specB[i]] where spec > 0 {
                 let k = 1 - spec, src = 1.09961 * spec
                 canvas.r[i] = src + canvas.r[i] * k
                 canvas.g[i] = src + canvas.g[i] * k
