@@ -397,15 +397,71 @@ enum GlassRender {
         return out
     }()
 
-    static func rimTable(_ appearance: Appearance?) -> [Int8]? {
-        let text: String
-        switch appearance {
-        case .dark: text = GlassRimTables.dark
-        case .tinted: return nil
-        default: text = GlassRimTables.light
+    /// Chiclet rim from the recorded display list (icr9d `010-renderImage.xml`), not a
+    /// per-icon residual. Inner stroke and two conic strokes are a 44 px stroke inverse-clipped
+    /// to the continuous rounded rect inset by 22. The border is an 8/3 px stroke, inverse-clipped
+    /// by group images. Tinted draws none of this.
+    static let rimField: (stroke: [Float], border: [Float], specA: [Float], specB: [Float]) = {
+        let specA: [Float] = [1, 0.975586, 0.903809, 0.787109, 0.630371, 0.438965, 0.220703, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.220703, 0.438965, 0.630371, 0.787109, 0.903809, 0.975586, 1]
+        let specB: [Float] = [1, 0.966797, 0.868164, 0.708008, 0.492676, 0.230225, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.230225, 0.492676, 0.708008, 0.868164, 0.966797, 1]
+        func conic(_ stops: [Float], _ start: Float, _ x: Int, _ y: Int) -> Float {
+            var u = (atan2f(Float(y) + 0.5 - 512, Float(x) + 0.5 - 512) - start) / (2 * .pi)
+            u -= u.rounded(.down)
+            let f = u * Float(stops.count - 1)
+            let i = min(Int(f), stops.count - 2)
+            let t = f - Float(i)
+            return stops[i] * (1 - t) + stops[i + 1] * t
         }
-        return Data(base64Encoded: text).map { $0.map { Int8(bitPattern: $0) } }
+        var stroke = [Float](repeating: 0, count: count)
+        var border = stroke, a = stroke, b = stroke
+        let d = chicletDistance
+        for i in 0..<count {
+            let dist = d[i]
+            guard dist > -24, dist < 24 else { continue }
+            let y = i / n, x = i - y * n
+            let cov = sat(22 - abs(dist) + 0.5)
+            let band = min(cov, sat(22.5 - dist))
+            stroke[i] = band
+            if band > 0 {
+                a[i] = conic(specA, -2.35619, x, y) * 0.6 * band
+                b[i] = conic(specB, 0.785398, x, y) * 0.4 * band
+            }
+            border[i] = sat((8 / 3) / 2 - abs(dist) + 0.5)
+        }
+        return (stroke, border, a, b)
+    }()
+
+    /// Working-space rim. Inner stroke is plus-lighter white 0.08; conic strokes are source-over
+    /// of extended white 1.09961; border is source-over black 0.12 (light) or white 0.15 (dark).
+    static func applyRim(_ canvas: inout Image, uncovered: [Float], dark: Bool) {
+        let rim = rimField
+        let borderAlpha: Float = dark ? 0.15 : 0.12
+        let borderColor: Float = dark ? 1 : 0
+        for i in 0..<count {
+            let s = rim.stroke[i]
+            if s > 0 {
+                let add = s * 0.08
+                canvas.r[i] += add; canvas.g[i] += add; canvas.b[i] += add
+                canvas.a[i] = min(1, canvas.a[i] + add)
+                for spec in [rim.specA[i], rim.specB[i]] where spec > 0 {
+                    let k = 1 - spec, src = 1.09961 * spec
+                    canvas.r[i] = src + canvas.r[i] * k
+                    canvas.g[i] = src + canvas.g[i] * k
+                    canvas.b[i] = src + canvas.b[i] * k
+                    canvas.a[i] = spec + canvas.a[i] * k
+                }
+            }
+            let bc = rim.border[i] * uncovered[i]
+            if bc > 0 {
+                let a = borderAlpha * bc, k = 1 - a, src = borderColor * a
+                canvas.r[i] = src + canvas.r[i] * k
+                canvas.g[i] = src + canvas.g[i] * k
+                canvas.b[i] = src + canvas.b[i] * k
+                canvas.a[i] = a + canvas.a[i] * k
+            }
+        }
     }
+
 
     // MARK: render
 
@@ -506,24 +562,14 @@ enum GlassRender {
             }
             for i in 0..<count { covered[i] *= 1 - min(1, content.a[i]) }
         }
-        let rim = rimTable(appearance)
-        let dsq = chicletDistance
+        if appearance != .tinted { applyRim(&canvas, uncovered: covered, dark: appearance == .dark) }
         var out = [UInt8](repeating: 255, count: count * 4)
         for y in 0..<n {
-            let thetaRow = Float(y) + 0.5 - 512
             for x in 0..<n {
                 let i = y * n + x
                 let a = max(canvas.a[i], 1e-6)
-                var c = convert((canvas.r[i] / a, canvas.g[i] / a, canvas.b[i] / a), p3ToSRGB)
-                c = (c.0 * 255, c.1 * 255, c.2 * 255)
-                if let rim, covered[i] > 0, dsq[i] > -48, dsq[i] < 24 {
-                    let th = atan2f(thetaRow, Float(x) + 0.5 - 512) * 180 / .pi
-                    let tb = min(max(Int((th + 180) / 2), 0), 179)
-                    let db = min(max(Int(dsq[i].rounded(.down)) + 48, 0), 72)
-                    let add = Float(rim[tb * 73 + db])
-                    c = (c.0 + add, c.1 + add, c.2 + add)
-                }
-                func q(_ v: Float) -> UInt8 { UInt8(min(max(v, 0), 255).rounded()) }
+                let c = convert((canvas.r[i] / a, canvas.g[i] / a, canvas.b[i] / a), p3ToSRGB)
+                func q(_ v: Float) -> UInt8 { UInt8(min(max(v * 255, 0), 255).rounded()) }
                 out[i * 4] = q(c.2); out[i * 4 + 1] = q(c.1); out[i * 4 + 2] = q(c.0)
             }
         }
