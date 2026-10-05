@@ -7,7 +7,6 @@ public enum XCAssetCompilerError: Error, Sendable, Equatable {
     case scaleFileMissing(asset: String, scale: String)
     case invalidColorComponent(String)
     case unsupportedGamut(String)
-    case multipleAppIconSets([String])
     case appIconSizeMissing(asset: String, size: String)
     case notADirectory(path: String)
     case unsupportedAssetType(String)
@@ -34,8 +33,6 @@ extension XCAssetCompilerError: CustomStringConvertible {
             return "Invalid color component: '\(s)'"
         case .unsupportedGamut(let g):
             return "Unsupported display-gamut: '\(g)' (expected sRGB or display-P3)"
-        case .multipleAppIconSets(let names):
-            return "Catalog has more than one .appiconset: \(names.joined(separator: ", "))"
         case .appIconSizeMissing(let asset, let size):
             return "AppIcon '\(asset)' declares size \(size) but no source file matched"
         case .notADirectory(let path):

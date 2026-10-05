@@ -292,7 +292,7 @@ enum ImageRenderer {
     /// IEEE 754 half-precision bit pattern for a value in [0, 1]. Gray and
     /// alpha come from 8-bit samples, so only 0 and normal-range values
     /// occur, but the conversion is exact for every normal half anyway.
-    private static func halfBits(_ value: Double) -> UInt16 {
+    static func halfBits(_ value: Double) -> UInt16 {
         let bits = Float(max(0, min(1, value))).bitPattern
         let sign = UInt16((bits >> 16) & 0x8000)
         let biased = Int((bits >> 23) & 0xFF)

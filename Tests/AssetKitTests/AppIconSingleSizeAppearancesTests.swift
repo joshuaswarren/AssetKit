@@ -271,6 +271,8 @@ struct AppIconSingleSizeAppearancesTests {
                 #expect(body.pixelsBGRA == [0x00, 0x3C, 0x00, 0x3C])
             case .bgra8:
                 Issue.record("tinted variant must not carry an ARGB rendition")
+            case .argb16:
+                Issue.record("tinted variant must not carry an ARGB-16 rendition")
             }
         }
     }

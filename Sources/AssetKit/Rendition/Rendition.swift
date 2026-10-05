@@ -156,12 +156,19 @@ struct BitmapBody: Sendable {
         /// alpha half). `pixelsBGRA` holds the interleaved little-endian
         /// half-float pairs when this format is selected.
         case gray16
+        /// 'RGBW' as an LE constant (file bytes W,B,G,R), colorSpace 4
+        /// (extended sRGB), 8 bytes/pixel (b, g, r, a half-floats, each
+        /// little-endian). The 16-bit rendition actool 27.0 emits beside the
+        /// 8-bit downconvert for 16-bit sources (IceCubes oracle: assetutil
+        /// Encoding 'ARGB-16', DisplayGamut P3).
+        case argb16
 
         var fourCC: String {
             switch self {
             case .bgra8: return "ARGB"
             case .gray8: return "GA8 "
             case .gray16: return "GA16"
+            case .argb16: return "RGBW"
             }
         }
 
@@ -170,6 +177,7 @@ struct BitmapBody: Sendable {
             case .bgra8: return 4
             case .gray8: return 2
             case .gray16: return 4
+            case .argb16: return 8
             }
         }
     }

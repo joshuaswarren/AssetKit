@@ -76,7 +76,8 @@ enum PDFSource {
             }
             let (rw, rh, bgra): (UInt32, UInt32, [UInt8])
             do {
-                (rw, rh, bgra) = try PNGSource.decodeBGRA(pngData)
+                let d = try PNGSource.decodeBGRA(pngData)
+                (rw, rh, bgra) = (d.width, d.height, d.bgra8)
             } catch {
                 throw XCAssetCompilerError.pdfRasterizationFailed(
                     asset: context.assetName,

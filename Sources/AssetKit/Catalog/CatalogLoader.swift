@@ -5,7 +5,30 @@ struct LoadedCatalog: Sendable {
     var imageSets: [LoadedImageSet]
     var colorSets: [LoadedColorSet]
     var symbolSets: [LoadedSymbolSet]
-    var appIcon: LoadedAppIcon?
+    /// Every `.appiconset` in the catalog. The primary icon and the
+    /// alternate icons (actool's `--alternate-app-icon` / `--include-all-app-icons`)
+    /// are all appiconsets; the caller selects by name.
+    var appIcons: [LoadedAppIcon]
+
+    /// The primary `.appiconset`: the one named `appIconName`. When no name
+    /// is given, the single appiconset of the catalog. A name with no
+    /// matching set selects nothing (the primary icon may be an Icon
+    /// Composer `.icon` outside the catalog).
+    func appIcon(named appIconName: String?) -> LoadedAppIcon? {
+        if let appIconName {
+            return appIcons.first(where: { $0.name == appIconName })
+        }
+        return appIcons.count == 1 ? appIcons[0] : nil
+    }
+
+    /// Every appiconset except the primary name, in catalog order. The
+    /// primary is matched by NAME, not by a resolved set: with an Icon
+    /// Composer `.icon` primary there is no `.appiconset` carrying the
+    /// primary name, and every appiconset is then an alternate.
+    func alternateAppIcons(primary appIconName: String?) -> [LoadedAppIcon] {
+        guard let appIconName else { return appIcons }
+        return appIcons.filter { $0.name != appIconName }
+    }
 }
 
 /// One `.symbolset`: a custom SF Symbol template SVG plus its Contents.json.
@@ -78,16 +101,12 @@ struct CatalogLoader: Sendable {
             }
         }
 
-        guard appIcons.count <= 1 else {
-            throw XCAssetCompilerError.multipleAppIconSets(appIcons.map(\.name))
-        }
-
         return LoadedCatalog(
             url: url,
             imageSets: imageSets,
             colorSets: colorSets,
             symbolSets: symbolSets,
-            appIcon: appIcons.first
+            appIcons: appIcons
         )
     }
 

@@ -4,7 +4,7 @@ import Testing
 
 @Suite("CatalogLoader")
 struct CatalogLoaderTests {
-    @Test("Rejects more than one appiconset")
+    @Test("Loads every appiconset and selects primary by name")
     func multipleAppIconSets() async throws {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("dup-\(UUID().uuidString).xcassets", isDirectory: true)
@@ -27,9 +27,13 @@ struct CatalogLoaderTests {
         }
 
         let loader = CatalogLoader()
-        await #expect(throws: XCAssetCompilerError.self) {
-            _ = try await loader.load(catalog: tmp)
-        }
+        let loaded = try await loader.load(catalog: tmp)
+        #expect(loaded.appIcons.map(\.name) == ["AppIcon", "AltIcon"])
+        #expect(loaded.appIcon(named: "AltIcon")?.name == "AltIcon")
+        #expect(loaded.appIcon(named: nil) == nil)
+        #expect(loaded.appIcon(named: "Missing") == nil)
+        #expect(loaded.alternateAppIcons(primary: "AppIcon").map(\.name) == ["AltIcon"])
+        #expect(loaded.alternateAppIcons(primary: "Missing").map(\.name) == ["AppIcon", "AltIcon"])
     }
 
     @Test("Loads empty catalog")
@@ -47,6 +51,6 @@ struct CatalogLoaderTests {
         let loaded = try await loader.load(catalog: tmp)
         #expect(loaded.imageSets.isEmpty)
         #expect(loaded.colorSets.isEmpty)
-        #expect(loaded.appIcon == nil)
+        #expect(loaded.appIcons.isEmpty)
     }
 }

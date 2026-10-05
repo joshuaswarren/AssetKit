@@ -63,7 +63,8 @@ enum SVGSource {
                 // garbage (non-PNG bytes, truncated stream) surfaces as
                 // svgRasterizationFailed rather than a raw swift-png error
                 // the user has no context for.
-                (rw, rh, rgba) = try PNGSource.decodeBGRA(pngData)
+                let d = try PNGSource.decodeBGRA(pngData)
+                (rw, rh, rgba) = (d.width, d.height, d.bgra8)
             } catch {
                 throw XCAssetCompilerError.svgRasterizationFailed(
                     asset: context.assetName,

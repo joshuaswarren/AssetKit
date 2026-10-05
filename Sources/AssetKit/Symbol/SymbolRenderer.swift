@@ -133,7 +133,8 @@ enum SymbolRenderer {
                     cacheSVG, svgRasterizer: svgRasterizer, asset: set.name,
                     filename: set.filename, width: width, height: height
                 )
-                let (rw, rh, rgba) = try PNGSource.decodeBGRA(png)
+                let d = try PNGSource.decodeBGRA(png)
+                let (rw, rh, rgba) = (d.width, d.height, d.bgra8)
                 for row in 0..<Int(height) {
                     for col in 0..<Int(width) {
                         let src = (row * Int(width) + col) * 4

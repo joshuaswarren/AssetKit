@@ -32,6 +32,12 @@ public struct AppIconBundle: Sendable {
     /// `CFBundleIconName` value.
     public var primaryIconName: String
 
+    /// Alternate icon names compiled alongside the primary (actool's
+    /// `--alternate-app-icon` / `--include-all-app-icons` sets, sorted).
+    /// Apple's partial plist lists each as
+    /// `CFBundleAlternateIcons.<name> = {CFBundleIconName: <name>}`.
+    public var alternateIconNames: [String]
+
     /// Plist keys to merge into the app's `Info.plist`. Includes
     /// `CFBundleIconName`, `CFBundleIcons`, `CFBundleIcons~ipad`, and the
     /// flat `CFBundleIconFiles` fallback list.
@@ -47,10 +53,12 @@ public struct AppIconBundle: Sendable {
 
     public init(
         primaryIconName: String,
+        alternateIconNames: [String] = [],
         infoPlistAdditions: [String: any Sendable],
         looseFiles: [LooseFile]
     ) {
         self.primaryIconName = primaryIconName
+        self.alternateIconNames = alternateIconNames
         self.infoPlistAdditions = infoPlistAdditions
         self.looseFiles = looseFiles
     }
@@ -95,7 +103,25 @@ public struct XCAssetCompiler: Sendable {
         self.heicDecoder = heicDecoder
     }
 
-    public func compile(catalog catalogURL: URL, iconComposer: IconComposerCompiler.Input? = nil) async throws -> CompileResult {
+    /// - Parameters:
+    ///   - catalog: the merged `.xcassets` directory.
+    ///   - appIconName: the primary icon's name (actool `--app-icon`).
+    ///   - iconComposer: the primary Icon Composer `.icon` source, compiled
+    ///     layered instead of through the appiconset path.
+    ///   - alternateIconComposers: alternate `.icon` sources; their renditions
+    ///     join the car and their names join `CFBundleAlternateIcons`.
+    ///
+    /// Alternate `.appiconset`s are every loaded appiconset except the
+    /// primary (actool `--include-all-app-icons`, or the explicit
+    /// `--alternate-app-icon` list already applied by the caller's catalog
+    /// merge). Apple 27.0 emits their renditions into the same car and one
+    /// `CFBundleAlternateIcons` plist entry each; no loose files.
+    public func compile(
+        catalog catalogURL: URL,
+        appIconName: String? = nil,
+        iconComposer: IconComposerCompiler.Input? = nil,
+        alternateIconComposers: [IconComposerCompiler.Input] = []
+    ) async throws -> CompileResult {
         let loader = CatalogLoader()
         let loaded = try await loader.load(catalog: catalogURL)
 
@@ -123,7 +149,7 @@ public struct XCAssetCompiler: Sendable {
             let compiled = try IconComposerCompiler.compile(input: iconComposer)
             renditions.append(contentsOf: compiled.renditions)
             appIconBundle = compiled.appIconBundle
-        } else if let appIcon = loaded.appIcon {
+        } else if let appIcon = loaded.appIcon(named: appIconName) {
             let plist = try AppIconPlistEmitter.emit(appIcon)
             renditions.append(contentsOf: try ImageRenderer.appIconRenditions(for: appIcon, files: plist.iconFiles))
 
@@ -141,6 +167,24 @@ public struct XCAssetCompiler: Sendable {
                 looseFiles: looseFiles
             )
         }
+
+        var alternates = loaded.alternateAppIcons(primary: appIconName).map(\.name)
+        // Each alternate .appiconset renders its own renditions into the car.
+        // Apple's partial plist doesn't carry CFBundleIconFiles for them
+        // (oracle: only CFBundleIconName), so no per-set plist/loose here.
+        for altAppIcon in loaded.alternateAppIcons(primary: appIconName) {
+            let plist = try AppIconPlistEmitter.emit(altAppIcon)
+            renditions.append(contentsOf: try ImageRenderer.appIconRenditions(
+                for: altAppIcon, files: plist.iconFiles))
+        }
+        for input in alternateIconComposers {
+            var alternate = input
+            if alternate.idioms.isEmpty { alternate.idioms = iconComposer?.idioms ?? [] }
+            let compiled = try IconComposerCompiler.compile(input: alternate)
+            renditions.append(contentsOf: compiled.renditions)
+            alternates.append(alternate.name)
+        }
+        appIconBundle?.alternateIconNames = alternates.sorted()
 
         let writer = CARWriter(deploymentTarget: deploymentTarget, renditions: renditions)
         let bytes = try writer.write()

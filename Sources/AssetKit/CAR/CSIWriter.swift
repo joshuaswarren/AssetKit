@@ -25,6 +25,7 @@ enum CSIWriter {
         case .bgra8: colorSpace = UInt32(body.colorSpaceID)
         case .gray8: colorSpace = 2
         case .gray16: colorSpace = 6
+        case .argb16: colorSpace = 4
         }
         let tvl = CSITVL.encode([
             .bitmapDescriptor(width: body.width, height: body.height),
