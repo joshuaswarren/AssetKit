@@ -88,12 +88,16 @@ public enum IconComposerCompiler {
                 guard layer["hidden"] as? Bool != true else { continue }
                 let position = layer["position"] as? [String: Any] ?? [:]
                 let translation = position["translation-in-points"] as? [Double] ?? [0, 0]
+                var blends = layer["blend-mode-specializations"] as? [[String: Any]] ?? []
+                if let mode = layer["blend-mode"] as? String, !blends.contains(where: { $0["appearance"] == nil }) {
+                    blends.insert(["value": mode], at: 0)
+                }
                 layers.append(Layer(
                     imageName: layer["image-name"] as? String ?? "",
                     scale: position["scale"] as? Double ?? 1,
                     translation: (translation.first ?? 0, translation.count > 1 ? translation[1] : 0),
                     fills: layer["fill-specializations"] as? [[String: Any]] ?? [],
-                    blends: layer["blend-mode-specializations"] as? [[String: Any]] ?? [],
+                    blends: blends,
                     glass: layer["glass"] as? Bool ?? false))
             }
             let shadow = group["shadow"] as? [String: Any]
@@ -152,16 +156,14 @@ public enum IconComposerCompiler {
         }
     }
 
-    /// Resolves a fill value for one appearance: the entry matching the
-    /// appearance first, else the appearance-less entry. "automatic"
-    /// resolves to nothing for light and dark, and to the light value for
-    /// tinted (oracle: the tinted group rendition of IceCubes' Group 2
-    /// carries the light solid Color-8).
+    /// Resolves a fill for one appearance. "automatic" is the unqualified
+    /// fill (Alt1 dark car stores the default white as Color-6). No unqualified
+    /// fill means no overlay (IceCubes front dark).
     static func resolveFill(_ specializations: [[String: Any]], appearance: Appearance?) -> Fill? {
         guard let value = specializedValue(specializations, appearance: appearance) else { return nil }
         if let name = value as? String {
             if name == "automatic" {
-                guard appearance == .tinted else { return nil }
+                guard appearance != nil else { return nil }
                 return resolveFill(specializations, appearance: nil)
             }
             return presetFill(name)
