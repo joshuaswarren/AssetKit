@@ -44,6 +44,13 @@ struct RenditionKey: Hashable, Sendable {
         /// rather than `image`; bitmap variants rasterised from the SVG
         /// (which `UIImage(named:)` actually returns) live under `image`.
         case vectorSource = 42
+        /// Icon Composer icon image stack ("AppIcon.iconstack"). IceCubes
+        /// oracle FACETKEYS/rendition keys.
+        case iconImageStack = 245
+        /// Icon Composer group ("AppIcon/Group").
+        case iconGroup = 246
+        /// Icon Composer named gradient ("AppIcon_Assets/system-light").
+        case namedGradient = 247
     }
 
     init(rendition: Rendition) {
@@ -76,6 +83,22 @@ struct RenditionKey: Hashable, Sendable {
             self.element = Element.bitmap.rawValue
             self.part = Part.multiSized.rawValue
             self.dimension2 = 0
+        case .namedGradient:
+            self.element = Element.bitmap.rawValue
+            self.part = Part.namedGradient.rawValue
+            self.dimension2 = 0
+            // Layered renditions are keyed at scale 1 (IceCubes oracle keys).
+            self.scale = 1
+        case .iconGroup:
+            self.element = Element.bitmap.rawValue
+            self.part = Part.iconGroup.rawValue
+            self.dimension2 = 0
+            self.scale = 1
+        case .iconImageStack:
+            self.element = Element.bitmap.rawValue
+            self.part = Part.iconImageStack.rawValue
+            self.dimension2 = 0
+            self.scale = 1
         case .color:
             self.element = Element.bitmap.rawValue
             self.part = Part.color.rawValue

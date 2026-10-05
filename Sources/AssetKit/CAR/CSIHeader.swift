@@ -33,6 +33,11 @@ enum CSIHeader {
     /// renderer on the DWAR-wrapped body (NNW oracle).
     static let pixelFormatPDF: UInt32 = 0x50444620
 
+    /// `pixelFormat` = 'DATA' as an LE multi-char constant (bytes A,T,A,D on
+    /// disk). Carried by the Icon Composer structured renditions (group
+    /// 1020, stack 1019); IceCubes oracle CSI headers.
+    static let pixelFormatData: UInt32 = 0x44415441
+
     /// Layout types observed in the reference. The names are derived from
     /// CoreUI symbol names where known.
     enum Layout: UInt16 {
@@ -50,6 +55,14 @@ enum CSIHeader {
         /// category; SVG promotes to its own layout because vector
         /// renditions surface a different AssetType to `assetutil`.
         case vector = 9
+        /// Icon Composer layered icon stack ("IconImageStack" in assetutil).
+        /// Body is a 12-byte DWAR envelope; the structure lives in the TVL.
+        case iconImageStack = 1019
+        /// Icon Composer group ("IconGroup"). Same body shape as the stack.
+        case iconGroup = 1020
+        /// Icon Composer named gradient ("Named Gradient"). Body is a raw
+        /// 'ARGG' record, no DWAR envelope.
+        case namedGradient = 1021
     }
 
     // swiftlint:disable:next function_parameter_count

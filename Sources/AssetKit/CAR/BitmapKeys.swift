@@ -28,6 +28,9 @@ enum BitmapKeys {
         var countOverride: UInt32? = nil
         /// Icon rendition groups (see `encode`) for the single-size shape.
         var renditionGroups: UInt32 = 0
+        /// Icon Composer icon descriptor slots (see `iconComposerIcon`).
+        var stackExpansion: UInt32 = 0
+        var stackLayerCount: UInt32 = 0
         /// The catalog's KEYFORMAT token count (drives hdrSize/keyLen/size).
         var keyTokenCount: Int = 9
 
@@ -54,6 +57,14 @@ enum BitmapKeys {
             /// descriptor with marker 0x02 and a shorter variable section
             /// (verified against the democar2 oracle).
             case appIconSingleSize
+            /// Any asset of an Icon Composer `.icon` compilation other than
+            /// the icon itself (colors, gradients, groups, the layer image).
+            /// The IceCubes oracle marks all of them 0x02 with all-1 slots.
+            case iconComposerAsset
+            /// The icon asset itself (name == --app-icon): marker 0x02,
+            /// slots [stack child expansion across appearances, 1, stack
+            /// layer count] (IceCubes oracle: [7, 1, 3]).
+            case iconComposerIcon
         }
 
         /// Slot 6 of the header (the only header u32 that varies by kind).
@@ -67,6 +78,7 @@ enum BitmapKeys {
             case .vector, .appIcon: return 0x0e
             case .vectorDiscarded: return 0x0f
             case .appIconSingleSize, .color: return 0x02
+            case .iconComposerAsset, .iconComposerIcon: return 0x02
             }
         }
 
@@ -95,6 +107,14 @@ enum BitmapKeys {
             case .color:
                 // Oracle: all-1s at 8/9/13/14 tokens.
                 template = [UInt32](repeating: 1, count: slots)
+            case .iconComposerAsset:
+                // IceCubes oracle (9t): all-1s for colors, gradients,
+                // groups, and the layer image.
+                template = [UInt32](repeating: 1, count: slots)
+            case .iconComposerIcon:
+                // IceCubes oracle (9t): [7, 1, 3] — stack child expansion
+                // across appearances, 1, stack layer count.
+                template = [stackExpansion, 1, stackLayerCount]
             case .appIconSingleSize:
                 // [groups, 1, 3] then 3s to fill
                 // (9t base+dark: [6,1,3]; 10t base+tinted: [6,1,3,3];
@@ -149,12 +169,32 @@ enum BitmapKeys {
         keyTokenCount: Int
     ) -> Descriptor? {
         let hasDescribableRendition = renditions.contains { rendition in
+            if rendition.iconComposerSource { return true }
             switch rendition.body {
             case .bitmap, .preservedSource, .color: return true
-            case .multiSized: return false
+            case .multiSized, .namedGradient, .iconGroup, .iconImageStack: return false
             }
         }
         guard hasDescribableRendition else { return nil }
+
+        // Icon Composer sources: the icon asset (the one carrying the
+        // stack) gets the [expansion, 1, layerCount] descriptor, every
+        // other asset of the compilation the all-1s 0x02 descriptor.
+        if renditions.contains(where: { $0.iconComposerSource }) {
+            if case .iconImageStack(let stack) = renditions.first(where: {
+                if case .iconImageStack = $0.body { return true }
+                return false
+            })?.body {
+                let slots = stack.bitmapKeysSlots
+                return Descriptor(
+                    kind: .iconComposerIcon,
+                    idiomSubtypeCount: 0,
+                    stackExpansion: slots.expansion,
+                    stackLayerCount: slots.layerCount,
+                    keyTokenCount: keyTokenCount)
+            }
+            return Descriptor(kind: .iconComposerAsset, idiomSubtypeCount: 0, keyTokenCount: keyTokenCount)
+        }
 
         let kind = inferKind(from: renditions)
         var countOverride: UInt32? = nil

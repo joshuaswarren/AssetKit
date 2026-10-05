@@ -82,7 +82,7 @@ public struct XCAssetCompiler: Sendable {
         self.pdfRasterizer = pdfRasterizer
     }
 
-    public func compile(catalog catalogURL: URL) async throws -> CompileResult {
+    public func compile(catalog catalogURL: URL, iconComposer: IconComposerCompiler.Input? = nil) async throws -> CompileResult {
         let loader = CatalogLoader()
         let loaded = try await loader.load(catalog: catalogURL)
 
@@ -100,7 +100,13 @@ public struct XCAssetCompiler: Sendable {
         }
 
         var appIconBundle: AppIconBundle?
-        if let appIcon = loaded.appIcon {
+        if let iconComposer {
+            // Icon Composer .icon source: the layered rendition set plus the
+            // loose home-screen PNGs and partial plist.
+            let compiled = try IconComposerCompiler.compile(input: iconComposer)
+            renditions.append(contentsOf: compiled.renditions)
+            appIconBundle = compiled.appIconBundle
+        } else if let appIcon = loaded.appIcon {
             let plist = try AppIconPlistEmitter.emit(appIcon)
             renditions.append(contentsOf: try ImageRenderer.appIconRenditions(for: appIcon, files: plist.iconFiles))
 

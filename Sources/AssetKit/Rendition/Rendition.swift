@@ -6,6 +6,9 @@ struct Rendition: Sendable {
         case color(ColorBody)
         case preservedSource(PreservedSourceBody)
         case multiSized(MultiSizedBody)
+        case namedGradient(NamedGradientBody)
+        case iconGroup(IconGroupBody)
+        case iconImageStack(IconImageStackBody)
     }
 
     var name: String
@@ -13,6 +16,10 @@ struct Rendition: Sendable {
     var scale: Scale?
     var appearance: Appearance?
     var gamut: Gamut?
+    /// True when the rendition was synthesized from an Icon Composer `.icon`
+    /// source. Selects actool's icon-composer BITMAPKEYS descriptors
+    /// (marker 0x02) for the asset regardless of rendition category.
+    var iconComposerSource: Bool = false
     /// Raw rendition-key subtype token. Non-zero only for icon variants
     /// keyed on a device trait — actool keys the 90 pt large-phone home icon
     /// (derived from the 60 pt @3x slot) at subtype 1792.

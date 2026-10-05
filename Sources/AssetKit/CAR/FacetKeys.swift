@@ -27,6 +27,10 @@ enum FacetKeys {
         case appIcon
         case image
         case color
+        /// Icon Composer group ("AppIcon/Group", part 246).
+        case iconGroup
+        /// Icon Composer named gradient (part 247).
+        case namedGradient
 
         func pairs(identifier: UInt16) -> [(UInt16, UInt16)] {
             switch self {
@@ -46,6 +50,18 @@ enum FacetKeys {
                 return [
                     (UInt16(AttributeID.element.rawValue), RenditionKey.Element.bitmap.rawValue),
                     (UInt16(AttributeID.part.rawValue), RenditionKey.Part.color.rawValue),
+                    (UInt16(AttributeID.identifier.rawValue), identifier),
+                ]
+            case .iconGroup:
+                return [
+                    (UInt16(AttributeID.element.rawValue), RenditionKey.Element.bitmap.rawValue),
+                    (UInt16(AttributeID.part.rawValue), RenditionKey.Part.iconGroup.rawValue),
+                    (UInt16(AttributeID.identifier.rawValue), identifier),
+                ]
+            case .namedGradient:
+                return [
+                    (UInt16(AttributeID.element.rawValue), RenditionKey.Element.bitmap.rawValue),
+                    (UInt16(AttributeID.part.rawValue), RenditionKey.Part.namedGradient.rawValue),
                     (UInt16(AttributeID.identifier.rawValue), identifier),
                 ]
             }
