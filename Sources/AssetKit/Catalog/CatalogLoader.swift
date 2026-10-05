@@ -52,9 +52,9 @@ struct CatalogLoader: Sendable {
         var symbolSets: [LoadedSymbolSet] = []
         var appIcons: [LoadedAppIcon] = []
 
-        try walk(url, fileManager: fm) { entry in
+        try walk(url, prefix: "", fileManager: fm) { entry, prefix in
             let ext = entry.pathExtension
-            let name = entry.deletingPathExtension().lastPathComponent
+            let name = prefix + entry.deletingPathExtension().lastPathComponent
             switch ext {
             case "imageset":
                 let contents = try decode(ImageSetContents.self, at: entry, decoder: decoder)
@@ -109,17 +109,29 @@ struct CatalogLoader: Sendable {
         }
     }
 
-    private func walk(_ root: URL, fileManager fm: FileManager, visit: (URL) throws -> Void) throws {
+    /// Visits every asset directory. A folder whose Contents.json sets
+    /// `properties.provides-namespace` prefixes its assets' names with `<folder>/`, as actool does.
+    private func walk(_ root: URL, prefix: String, fileManager fm: FileManager,
+                      visit: (URL, String) throws -> Void) throws {
         let children = try fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey])
         for child in children {
             let values = try child.resourceValues(forKeys: [.isDirectoryKey])
             guard values.isDirectory == true else { continue }
             let ext = child.pathExtension
             if ["imageset", "colorset", "appiconset", "symbolset"].contains(ext) {
-                try visit(child)
+                try visit(child, prefix)
             } else {
-                try walk(child, fileManager: fm, visit: visit)
+                let namespaced = providesNamespace(child)
+                try walk(child, prefix: namespaced ? prefix + child.lastPathComponent + "/" : prefix,
+                         fileManager: fm, visit: visit)
             }
         }
+    }
+
+    private func providesNamespace(_ folder: URL) -> Bool {
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("Contents.json")),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let properties = json["properties"] as? [String: Any] else { return false }
+        return properties["provides-namespace"] as? Bool ?? false
     }
 }

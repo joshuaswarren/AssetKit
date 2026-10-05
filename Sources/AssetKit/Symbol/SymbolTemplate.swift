@@ -150,21 +150,13 @@ public enum SymbolTemplate {
             if name == "g", id == "Guides" {
                 guidesTranslation = translation ?? (0, 0)
             }
-            if name == "line", let id {
-                let sizeClass: Int?
-                switch id.last {
-                case "S": sizeClass = 1
-                case "M": sizeClass = 2
-                case "L": sizeClass = 3
-                default: sizeClass = nil
-                }
-                guard let sizeClass else { return }
-                if id.hasPrefix("Baseline-"), let y = attrs["y1"].flatMap(Double.init) {
-                    baselineY[sizeClass] = y
-                }
-                if id.hasPrefix("Capline-"), let y = attrs["y1"].flatMap(Double.init) {
-                    caplineY[sizeClass] = y
-                }
+            // Guides are <line y1=…> (SF Symbols app) or <path d="M x,y l…"> (template v3.0 exporters
+            // such as SwiftDraw, used by Mastodon).
+            if name == "line" || name == "path", let id,
+               id.hasPrefix("Baseline-") || id.hasPrefix("Capline-"),
+               let sizeClass = ["S": 1, "M": 2, "L": 3][String(id.suffix(1))],
+               let y = name == "line" ? attrs["y1"].flatMap(Double.init) : attrs["d"].flatMap(guideY) {
+                if id.hasPrefix("Baseline-") { baselineY[sizeClass] = y } else { caplineY[sizeClass] = y }
             }
 
             if name == "path" {
@@ -212,6 +204,15 @@ public enum SymbolTemplate {
                 .compactMap { Double($0) }
             guard !parts.isEmpty else { return nil }
             return (parts[0], parts.count > 1 ? parts[1] : 0)
+        }
+
+        /// The y of a horizontal guide drawn as a path: `M18,76 l800,0` -> 76.
+        func guideY(_ d: String) -> Double? {
+            guard d.first == "M" else { return nil }
+            let numbers = d.dropFirst().prefix { !$0.isLetter }
+                .split(whereSeparator: { $0 == "," || $0 == " " })
+                .compactMap { Double($0) }
+            return numbers.count >= 2 ? numbers[1] : nil
         }
 
         private func parseStrokeHalfWidth(_ attrs: [String: String]) -> Double {

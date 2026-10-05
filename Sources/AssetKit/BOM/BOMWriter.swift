@@ -38,6 +38,11 @@ struct BOMWriter {
         return UInt32(blocks.count - 1)
     }
 
+    /// Fill a block reserved earlier with `addBlock(Data())`, for pages that link to later blocks.
+    mutating func setBlock(_ id: UInt32, _ data: Data) {
+        blocks[Int(id)] = Block(data: data)
+    }
+
     mutating func setVariable(_ name: String, blockID: UInt32) {
         variables.append(Variable(name: name, blockID: blockID))
     }

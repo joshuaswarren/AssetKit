@@ -73,19 +73,14 @@ struct CARWriter: Sendable {
         // ---- Blocks ----
         bom.addBlock(CARHeaderBlock.data(renditionCount: UInt32(renditions.count)))
 
-        bom.addBlock(BOMTree.header(
-            leafBlockID: renditionsTree.value, blockSize: BOMTree.defaultBlockSize,
-            pathCount: renditionData.count, isInternal: false,
-            keyTrailerLength: renditionData.first?.key.count ?? 0))
+        // The RENDITIONS header and first leaf are filled in at the end: with more entries than a
+        // page holds, the leaves link forward to pages (and a branch) appended after every other block.
+        bom.addBlock(Data())
+        bom.addBlock(Data())
         // Leaf entries are key-sorted; data blocks stay in list order.
         let renditionsWithIDs = zip(renditionData, renditionsDataIDs)
             .map { entry, ids in (entry: entry, ids: ids) }
             .sorted { BOMTree.byteCompare($0.entry.key, $1.entry.key) < 0 }
-        bom.addBlock(BOMTree.leafExternal(
-            sorted: renditionsWithIDs.map { $0.entry },
-            keyBlockIDs: renditionsWithIDs.map { $0.ids.key },
-            valueBlockIDs: renditionsWithIDs.map { $0.ids.value },
-            blockSize: BOMTree.defaultBlockSize))
         // actool's leaf rule, verified across the icon / NNW / base+tinted
         // oracle cars: keys of ONE uniform length are inlined into the leaf
         // (trailer = that length, key area appended after the 4096 block);
@@ -134,23 +129,71 @@ struct CARWriter: Sendable {
         bom.addBlock(ExtendedMetadata.data(deploymentTarget: deploymentTarget))
 
         if !bitmapData.isEmpty {
-            bom.addBlock(BOMTree.header(
-                leafBlockID: bitmapLeafID, blockSize: 1024,
-                pathCount: bitmapData.count, isInternal: true, keyTrailerLength: 0))
-            bom.addBlock(BOMTree.leafInternal(
-                sorted: bitmapData.map { entry in
-                    let inline = entry.key.withContiguousStorageIfAvailable { bytes -> UInt32 in
-                        UInt32(bytes[0]) << 24 | UInt32(bytes[1]) << 16
-                            | UInt32(bytes[2]) << 8 | UInt32(bytes[3])
-                    } ?? 0
-                    return (key: inline, value: entry.value)
-                },
-                valueBlockIDs: bitmapValueIDs.map { $0 },
-                blockSize: 1024))
+            bom.addBlock(Data()) // header, set below
+            bom.addBlock(Data()) // first leaf, set below
             for entry in bitmapData {
                 bom.addBlock(entry.value)
             }
+            let inlineKeys: [UInt32] = bitmapData.map { entry in
+                entry.key.withContiguousStorageIfAvailable { bytes -> UInt32 in
+                    UInt32(bytes[0]) << 24 | UInt32(bytes[1]) << 16 | UInt32(bytes[2]) << 8 | UInt32(bytes[3])
+                } ?? 0
+            }
+            var pageIDs = [bitmapLeafID]
+            var pages: [Range<Int>] = []
+            var first = 0
+            for size in BOMTree.evenLeafSizes(count: bitmapData.count, blockSize: 1024) {
+                pages.append(first..<first + size)
+                first += size
+            }
+            for _ in pages.dropFirst() { pageIDs.append(bom.addBlock(Data())) }
+            for (i, range) in pages.enumerated() {
+                bom.setBlock(pageIDs[i], BOMTree.leafInternal(
+                    sorted: range.map { (key: inlineKeys[$0], value: bitmapData[$0].value) },
+                    valueBlockIDs: range.map { bitmapValueIDs[$0] },
+                    blockSize: 1024,
+                    forward: i + 1 < pageIDs.count ? pageIDs[i + 1] : 0,
+                    backward: i > 0 ? pageIDs[i - 1] : 0))
+            }
+            var root = pageIDs[0]
+            if pages.count > 1 {
+                root = bom.addBlock(BOMTree.branchInternal(
+                    children: pageIDs, separatorKeys: pages.dropLast().map { inlineKeys[$0.upperBound - 1] },
+                    blockSize: 1024))
+            }
+            bom.setBlock(bitmapTreeHeaderID, BOMTree.header(
+                leafBlockID: root, blockSize: 1024,
+                pathCount: bitmapData.count, isInternal: true, keyTrailerLength: 0))
         }
+
+        var leafIDs = [renditionsTree.value]
+        var leaves: [ArraySlice<(entry: (key: Data, value: Data), ids: (key: UInt32, value: UInt32))>] = []
+        var start = 0
+        for size in BOMTree.leafSizes(count: renditionsWithIDs.count, blockSize: BOMTree.defaultBlockSize) {
+            leaves.append(renditionsWithIDs[start..<start + size])
+            start += size
+        }
+        for _ in leaves.dropFirst() { leafIDs.append(bom.addBlock(Data())) }
+        for (i, leaf) in leaves.enumerated() {
+            bom.setBlock(leafIDs[i], BOMTree.leafExternal(
+                sorted: leaf.map { $0.entry },
+                keyBlockIDs: leaf.map { $0.ids.key },
+                valueBlockIDs: leaf.map { $0.ids.value },
+                blockSize: BOMTree.defaultBlockSize,
+                forward: i + 1 < leafIDs.count ? leafIDs[i + 1] : 0,
+                backward: i > 0 ? leafIDs[i - 1] : 0))
+        }
+        var renditionsRoot = leafIDs[0]
+        if leaves.count > 1 {
+            let lasts = leaves.dropLast().map { $0[$0.endIndex - 1] }
+            renditionsRoot = bom.addBlock(BOMTree.branch(
+                children: leafIDs, separatorKeys: lasts.map { $0.entry.key },
+                separatorKeyBlockIDs: lasts.map { $0.ids.key }, blockSize: BOMTree.defaultBlockSize))
+        }
+        bom.setBlock(renditionsTree.key, BOMTree.header(
+            leafBlockID: renditionsRoot, blockSize: BOMTree.defaultBlockSize,
+            pathCount: renditionData.count, isInternal: false,
+            keyTrailerLength: renditionData.first?.key.count ?? 0))
 
         // ---- Variables table (actool order) ----
         bom.setVariable("CARHEADER", blockID: carHeaderID)
