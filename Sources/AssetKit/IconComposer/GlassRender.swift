@@ -419,8 +419,9 @@ enum GlassRender {
             let dist = d[i]
             guard dist > -24, dist < 24 else { continue }
             let y = i / n, x = i - y * n
-            let cov = sat(22 - abs(dist) + 0.5)
-            let band = min(cov, sat(22.5 - dist))
+            // Centered 44 px stroke reads as a tent (1 on the contour, 0 at ±22), not a
+            // filled band. A filled band is ~flat 149 on dark; Apple falls 134→49 over 22 px.
+            let band = sat(1 - abs(dist) / 22)
             stroke[i] = band
             if band > 0 {
                 a[i] = conic(specA, -2.35619, x, y) * 0.6 * band
@@ -431,25 +432,21 @@ enum GlassRender {
         return (stroke, border, a, b)
     }()
 
-    /// Working-space rim. Inner stroke is plus-lighter white 0.08; conic strokes are source-over
-    /// of extended white 1.09961; border is source-over black 0.12 (light) or white 0.15 (dark).
+    /// Working-space rim. Conic strokes are source-over of extended white 1.09961 (the
+    /// plus-lighter 0.08 inner stroke is in the display list, but applying it forces the
+    /// light bottom edge above Apple's 245). Border is source-over black 0.12 (light)
+    /// or white 0.15 (dark).
     static func applyRim(_ canvas: inout Image, uncovered: [Float], dark: Bool) {
         let rim = rimField
         let borderAlpha: Float = dark ? 0.15 : 0.12
         let borderColor: Float = dark ? 1 : 0
         for i in 0..<count {
-            let s = rim.stroke[i]
-            if s > 0 {
-                let add = s * 0.08
-                canvas.r[i] += add; canvas.g[i] += add; canvas.b[i] += add
-                canvas.a[i] = min(1, canvas.a[i] + add)
-                for spec in [rim.specA[i], rim.specB[i]] where spec > 0 {
-                    let k = 1 - spec, src = 1.09961 * spec
-                    canvas.r[i] = src + canvas.r[i] * k
-                    canvas.g[i] = src + canvas.g[i] * k
-                    canvas.b[i] = src + canvas.b[i] * k
-                    canvas.a[i] = spec + canvas.a[i] * k
-                }
+            for spec in [rim.specA[i], rim.specB[i]] where spec > 0 {
+                let k = 1 - spec, src = 1.09961 * spec
+                canvas.r[i] = src + canvas.r[i] * k
+                canvas.g[i] = src + canvas.g[i] * k
+                canvas.b[i] = src + canvas.b[i] * k
+                canvas.a[i] = spec + canvas.a[i] * k
             }
             let bc = rim.border[i] * uncovered[i]
             if bc > 0 {
