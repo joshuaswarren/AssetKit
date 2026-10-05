@@ -327,11 +327,9 @@ public enum IconComposerCompiler {
             (imageName as NSString).deletingPathExtension
         }
 
-        // Color and gradient naming, in Apple's allocation order: the
-        // always-present extended-gray white (Color-1; the shadow/specular
-        // slot), the preset backgrounds (their colors follow), then layer
-        // fills in traversal order. Custom gradients number from 3 — after
-        // the two presets.
+        // Color-1 is the extended-gray white. Backgrounds are allocated in
+        // appearance order; a custom light fill is Gradient-1 and a layer
+        // gradient after both backgrounds is Gradient-3.
         var colors: [IconColor] = [IconColor(colorSpaceID: 6, components: [1, 1])]
         var colorNames: [IconColor: String] = [:]
         func colorSlot(_ c: IconColor) -> String {
@@ -342,8 +340,6 @@ public enum IconComposerCompiler {
             return name
         }
 
-        // Presets are always materialized (the oracle emits system-light /
-        // system-dark and their colors even for icons that do not use them).
         var gradientFacets: [(facet: String, stops: [IconColor])] = []
         func presetSlot(_ preset: String) -> String {
             let fill = presetFill(preset)!
@@ -359,8 +355,6 @@ public enum IconComposerCompiler {
             }
             fatalError("preset fills are gradients")
         }
-        _ = presetSlot("system-light")
-        _ = presetSlot("system-dark")
 
         var fillNames: [Fill: String] = [:]
         func fillSlot(_ fill: Fill) -> String {
@@ -378,6 +372,25 @@ public enum IconComposerCompiler {
             fillNames[fill] = name
             return name
         }
+
+        // Backgrounds in appearance order, then layer fills. A custom light
+        // fill is Gradient-1 and replaces system-light; a later layer gradient
+        // is Gradient-3 because system-dark still occupies a slot.
+        func backgroundSlot(_ appearance: Appearance?) -> String {
+            if let fill = resolveFill(model.fills, appearance: appearance) {
+                if case .gradient(let top, let bottom) = fill {
+                    for preset in ["system-light", "system-dark"] {
+                        if case .gradient(let pt, let pb)? = presetFill(preset), pt == top, pb == bottom {
+                            return presetSlot(preset)
+                        }
+                    }
+                }
+                return fillSlot(fill)
+            }
+            return presetSlot(appearance == .dark ? "system-dark" : "system-light")
+        }
+        let backgroundNames = appearances.map { backgroundSlot($0) }
+
 
         // Layer fills, in traversal order (group, layer, appearance).
         for group in model.groups {
@@ -459,8 +472,7 @@ public enum IconComposerCompiler {
         // background gradient, then the groups in reverse json order
         // (topmost first — oracle order for two groups).
         var stackRenditions: [Rendition] = []
-        for appearance in appearances {
-            let backgroundName = presetSlot(appearance == .dark ? "system-dark" : "system-light")
+        for (appearance, backgroundName) in zip(appearances, backgroundNames) {
             let backgroundIdentifier = UInt16(FacetKeys.nameHash(backgroundName) & 0xFFFF)
             var children = [IconStackChild(
                 part: 247, identifier: backgroundIdentifier,
