@@ -446,8 +446,11 @@ enum GlassRender {
                         switch fill {
                         case .solid(let s): c = p3(s)
                         case .gradient(let a, let b):
-                            let p = p3(a), q = p3(b)
-                            c = (p.0 + (q.0 - p.0) * t, p.1 + (q.1 - p.1) * t, p.2 + (q.2 - p.2) * t, p.3 + (q.3 - p.3) * t)
+                            // gradient-interpolation "smooth": smoothstep-eased, premultiplied endpoints
+                            let p = p3(a), q = p3(b), e = t * t * (3 - 2 * t)
+                            let al = p.3 + (q.3 - p.3) * e, k = 1 / max(al, 1e-6)
+                            c = ((p.0 * p.3 + (q.0 * q.3 - p.0 * p.3) * e) * k, (p.1 * p.3 + (q.1 * q.3 - p.1 * p.3) * e) * k,
+                                 (p.2 * p.3 + (q.2 * q.3 - p.2 * p.3) * e) * k, al)
                         }
                         for x in 0..<n {
                             let i = y * n + x
@@ -457,10 +460,9 @@ enum GlassRender {
                     }
                 }
                 if tinted {
+                    // color-monochrome (white, amount 1): Rec. 709 luma of the P3 gamma components
                     for i in 0..<count where placed.a[i] > 0 {
-                        let a = placed.a[i]
-                        let l = 0.2126 * toLinear(placed.r[i] / a) + 0.7152 * toLinear(placed.g[i] / a) + 0.0722 * toLinear(placed.b[i] / a)
-                        let v = toGamma(l) * a
+                        let v = 0.2126 * placed.r[i] + 0.7152 * placed.g[i] + 0.0722 * placed.b[i]
                         placed.r[i] = v; placed.g[i] = v; placed.b[i] = v
                     }
                 }
