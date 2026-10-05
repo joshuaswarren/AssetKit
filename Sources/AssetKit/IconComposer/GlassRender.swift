@@ -439,24 +439,28 @@ enum GlassRender {
             let band = min(outer, inner)
             stroke[i] = band
             if band > 0 {
-                a[i] = conic(specA, -2.35619, x, y) * 0.6 * band
-                b[i] = conic(specB, 0.785398, x, y) * 0.4 * band
+                a[i] = conic(specA, -2.35619, x, y) * band
+                b[i] = conic(specB, 0.785398, x, y) * band
             }
             border[i] = sat((Float(8) / 3) / 2 - abs(dist) + 0.5)
         }
         return (stroke, border, a, b)
     }()
 
-    /// Working-space rim. Conic strokes are source-over of extended white 1.09961 (the
-    /// plus-lighter 0.08 inner stroke is in the display list, but applying it forces the
-    /// light bottom edge above Apple's 245). Border is source-over black 0.12 (light)
-    /// or white 0.15 (dark).
-    static func applyRim(_ canvas: inout Image, uncovered: [Float], dark: Bool) {
+    /// Conic strokes are source-over of extended white 1.09961. Draw alphas: light 0.6/0.4,
+    /// dark 0.4/0.25 plus a 0.05 inner stroke. The light black border is system backgrounds only.
+    static func applyRim(_ canvas: inout Image, uncovered: [Float], dark: Bool, systemBackground: Bool) {
         let rim = rimField
-        let borderAlpha: Float = dark ? 0.15 : 0.12
+        let (a1, a2): (Float, Float) = dark ? (0.4, 0.25) : (0.6, 0.4)
+        let borderAlpha: Float = dark ? 0.15 : (systemBackground ? 0.12 : 0)
         let borderColor: Float = dark ? 1 : 0
         for i in 0..<count {
-            for spec in [rim.specA[i], rim.specB[i]] where spec > 0 {
+            if dark, rim.stroke[i] > 0 {
+                let add = rim.stroke[i] * 0.05
+                canvas.r[i] += add; canvas.g[i] += add; canvas.b[i] += add
+                canvas.a[i] = min(1, canvas.a[i] + add)
+            }
+            for spec in [rim.specA[i] * a1, rim.specB[i] * a2] where spec > 0 {
                 let k = 1 - spec, src = 1.09961 * spec
                 canvas.r[i] = src + canvas.r[i] * k
                 canvas.g[i] = src + canvas.g[i] * k
@@ -481,8 +485,9 @@ enum GlassRender {
                        appearance: Appearance?) -> [UInt8] {
         typealias C = IconComposerCompiler
         let tinted = appearance == .tinted
+        let fillForRim = tinted ? nil : C.resolveFill(model.fills, appearance: appearance)
         var canvas = Image(fill: 0, 0, 0, 1)
-        if !tinted, let fill = C.resolveFill(model.fills, appearance: appearance) {
+        if let fill = fillForRim {
             let (top, bottom): (C.IconColor, C.IconColor)
             switch fill {
             case .solid(let c): (top, bottom) = (c, c)
@@ -512,6 +517,10 @@ enum GlassRender {
                 if fill == nil, layer.fills.isEmpty, appearance == .dark, lightShape(image),
                    let inherited = C.resolveFill(model.fills, appearance: nil) {
                     fill = inherited
+                    let peak = placed.a.max() ?? 0
+                    if peak > 0.05 {
+                        for i in 0..<count where placed.a[i] > 0 { placed.a[i] = min(1, placed.a[i] / peak) }
+                    }
                 }
                 if let fill {
                     for y in 0..<n {
@@ -591,7 +600,10 @@ enum GlassRender {
             }
             for i in 0..<count { covered[i] *= 1 - min(1, content.a[i]) }
         }
-        if appearance != .tinted { applyRim(&canvas, uncovered: covered, dark: appearance == .dark) }
+        if appearance != .tinted {
+            let system = fillForRim == nil || fillForRim == C.presetFill("system-light") || fillForRim == C.presetFill("system-dark")
+            applyRim(&canvas, uncovered: covered, dark: appearance == .dark, systemBackground: system)
+        }
         var out = [UInt8](repeating: 255, count: count * 4)
         for y in 0..<n {
             for x in 0..<n {
