@@ -168,16 +168,18 @@ public enum SymbolTemplate {
             }
 
             if name == "path" {
+                // Apple's rewrite keeps editor attributes under their local name, after the plain ones
+                // (IceCubes' rocket.fill: `sodipodi:nodetypes` becomes a trailing `nodetypes`).
                 let attributes = attrs.filter { $0.key != "d" && $0.key != "id" }
-                    .sorted { $0.key < $1.key }
-                    .map { (name: $0.key, value: $0.value) }
+                    .sorted { ($0.key.contains(":") ? 1 : 0, $0.key) < ($1.key.contains(":") ? 1 : 0, $1.key) }
+                    .map { (name: String($0.key.split(separator: ":").last!), value: $0.value) }
                 push(Node(id: id, translation: translation, strokeHalfWidth: strokeHalf, pathData: attrs["d"], attributes: attributes, children: []))
                 return
             }
             if name == "g" {
                 let attributes = attrs.filter { $0.key != "id" && $0.key != "transform" }
-                    .sorted { $0.key < $1.key }
-                    .map { (name: $0.key, value: $0.value) }
+                    .sorted { ($0.key.contains(":") ? 1 : 0, $0.key) < ($1.key.contains(":") ? 1 : 0, $1.key) }
+                    .map { (name: String($0.key.split(separator: ":").last!), value: $0.value) }
                 push(Node(id: id, translation: translation, strokeHalfWidth: strokeHalf, pathData: nil, attributes: attributes, children: []))
                 return
             }
