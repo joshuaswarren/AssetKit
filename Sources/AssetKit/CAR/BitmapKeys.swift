@@ -54,6 +54,12 @@ enum BitmapKeys {
             /// descriptor with marker 0x02 and a shorter variable section
             /// (verified against the democar2 oracle).
             case appIconSingleSize
+            /// `.symbolset` assets. Apple's marker is 0x0e (vector source,
+            /// like preserving PDF sets) but the variable slots differ
+            /// from all-1s: 12-token oracle [1, 1, 0x10, 4, 7, 0x20],
+            /// 14-token oracle [1, 1, 0x10, 4, 7, 1, 0x20, 1] — the 0x20
+            /// sits at index keyTokenCount/2 - 1 in both.
+            case symbol
         }
 
         /// Slot 6 of the header (the only header u32 that varies by kind).
@@ -64,7 +70,7 @@ enum BitmapKeys {
         private var assetKindMarker: UInt32 {
             switch kind {
             case .image: return 0x04
-            case .vector, .appIcon: return 0x0e
+            case .vector, .appIcon, .symbol: return 0x0e
             case .vectorDiscarded: return 0x0f
             case .appIconSingleSize, .color: return 0x02
             }
@@ -105,6 +111,16 @@ enum BitmapKeys {
                 // Classic multi-size oracle (9t): [70, (1,1), 63].
                 template = [70, 0x0001_0001, 63]
                 template += [UInt32](repeating: 1, count: max(0, slots - 3))
+            case .symbol:
+                // Apple symbol oracles: 12t [1, 1, 0x10, 4, 7, 0x20],
+                // 14t [1, 1, 0x10, 4, 7, 1, 0x20, 1]. The 0x20 lands at
+                // index keyTokenCount/2 - 1 in both; other slots after
+                // the shared five-value prefix are 1.
+                template = [1, 1, 0x10, 4, 7]
+                template += [UInt32](repeating: 1, count: max(0, slots - 5))
+                if slots > 0 {
+                    template[max(0, keyTokenCount / 2 - 1)] = 0x20
+                }
             case .image, .vector, .vectorDiscarded:
                 // Oracle (13t no-app-icon): all-1s for 0x0e/0x0f;
                 // (14t full NNW): [1, 1, 0x10, 4, 7, 1, 0x20, 1] for the
@@ -150,7 +166,8 @@ enum BitmapKeys {
     ) -> Descriptor? {
         let hasDescribableRendition = renditions.contains { rendition in
             switch rendition.body {
-            case .bitmap, .preservedSource, .color: return true
+            case .bitmap, .preservedSource, .color, .symbolVector, .symbolCached: return true
+            case .symbolPacked: return false
             case .multiSized: return false
             }
         }
@@ -219,6 +236,13 @@ enum BitmapKeys {
         for rendition in renditions {
             if case .bitmap(let body) = rendition.body, body.kind == .appIcon {
                 return .appIcon
+            }
+        }
+        for rendition in renditions {
+            switch rendition.body {
+            case .symbolVector, .symbolCached:
+                return .symbol
+            default: break
             }
         }
         for rendition in renditions {

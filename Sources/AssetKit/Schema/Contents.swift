@@ -100,6 +100,16 @@ struct CatalogContents: Codable, Sendable {
     var info: Info
 }
 
+/// `.symbolset` Contents.json: one symbol template SVG per entry.
+struct SymbolSetContents: Codable, Sendable {
+    struct Symbol: Codable, Sendable {
+        var filename: String
+        var idiom: Idiom?
+    }
+    var symbols: [Symbol]
+    var info: CatalogContents.Info?
+}
+
 struct ImageSetContents: Codable, Sendable {
     /// `properties` block: `preserves-vector-representation` and
     /// `template-rendering-intent` drive how PDF sources are compiled.

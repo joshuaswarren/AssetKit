@@ -191,6 +191,14 @@ struct CARWriter: Sendable {
         case .bitmap(let body):
             let scaleFactor = UInt32(rendition.scale?.factor ?? 1) * 100
             return CSIWriter.bitmap(name: rendition.name, body: body, scaleFactor: scaleFactor)
+        case .symbolVector(let body):
+            return CSIWriter.symbolVector(body: body)
+        case .symbolCached(let body):
+            let scaleFactor = UInt32(rendition.scale?.factor ?? 1) * 100
+            return CSIWriter.symbolCached(body: body, scaleFactor: scaleFactor)
+        case .symbolPacked(let body):
+            let scaleFactor = UInt32(rendition.scale?.factor ?? 1) * 100
+            return CSIWriter.symbolPacked(body: body, scaleFactor: scaleFactor)
         case .multiSized(let body):
             return CSIWriter.multiSized(name: rendition.name, body: body)
         case .color(let body):

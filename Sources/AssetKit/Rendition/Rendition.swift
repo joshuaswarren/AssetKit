@@ -6,6 +6,14 @@ struct Rendition: Sendable {
         case color(ColorBody)
         case preservedSource(PreservedSourceBody)
         case multiSized(MultiSizedBody)
+        /// Symbol-set renditions (`.symbolset`): the vector glyph CoreUI
+        /// renders at any point size, and the pre-rasterised cache entries
+        /// keyed per (scale, cached size).
+        case symbolVector(SymbolVectorBody)
+        case symbolCached(SymbolCachedBody)
+        /// Per-scale atlas holding the cached bitmaps of one symbol
+        /// (ZZZZPackedAsset, element 9 / part 181).
+        case symbolPacked(SymbolPackedBody)
     }
 
     var name: String
@@ -21,7 +29,74 @@ struct Rendition: Sendable {
     /// the appiconset's distinct point sizes, ascending. Only icon renditions
     /// carry it; assetutil surfaces it as "Icon Index".
     var iconIndex: UInt16? = nil
+    /// Deployment-target key token. Symbol renditions are keyed at the OS
+    /// version that introduced symbol sets (token 5, assetutil
+    /// "DeploymentTarget": "2019"); every other rendition kind leaves the
+    /// slot zero (Apple NNW oracle: only symbol and their packed renditions
+    /// carry 5).
+    var deploymentTarget: UInt16? = nil
     var body: Body
+}
+
+/// Vector-glyph rendition of a `.symbolset` (CoreUI part 59, CSI layout
+/// 1017, pixelFormat 'SVG '). The body is a DWAR(LZFSE(SVG)) envelope of a
+/// rewritten template layer.
+struct SymbolVectorBody: Sendable {
+    /// Glyph-weight key token (Regular = 4, the only weight NNW's template
+    /// carries; token = the weight's rank in actool's weight list).
+    var glyphWeight: UInt16
+    /// Glyph-size key token: 1 Small, 2 Medium, 3 Large.
+    var glyphSize: UInt16
+    /// Name-identifier token (CRC32 of the asset name & 0xFFFF).
+    var identifier: UInt16
+    /// Font metrics at the 17 pt reference size, from the template Guides
+    /// (baseline below the drawing bottom, cap height, side margins),
+    /// scaled by 17/100.
+    var baseline: Float
+    var capline: Float
+    var leftMargin: Float
+    var rightMargin: Float
+    /// The (cachedIndex, pointSize) pairs of TVL 1018. Only the Medium
+    /// vector carries them (Apple two-symbol oracle: Small/Large vectors
+    /// omit the pair list).
+    var availableSizes: [(index: UInt32, pointSize: UInt32)]?
+    /// Rewritten template-layer SVG (Apple serializer format).
+    var svg: Data
+    /// The template SVG filename for the CSI name field.
+    var renditionName: String
+}
+
+/// Pre-rasterised symbol cache entry (part 181, CSI layout 1003,
+/// pixelFormat 'GA8 ', no inline pixels — CoreUI resolves the pixel data
+/// through the TVL-1010 link to the packed atlas).
+struct SymbolCachedBody: Sendable {
+    var glyphWeight: UInt16
+    var glyphSize: UInt16
+    /// Glyph Cached Index (0..2) — the dimension2 key token.
+    var cachedIndex: UInt16
+    var identifier: UInt16
+    var width: UInt32
+    var height: UInt32
+    /// Placement inside the (unemitted) packed atlas.
+    var atlasX: UInt32 = 0
+    var atlasY: UInt32 = 0
+    /// RenditionName for the CSI name field (the template SVG filename).
+    var renditionName: String
+}
+
+/// Per-scale symbol cache atlas (CoreUI element 9 / part 181, CSI layout
+/// 1004, 'GA8 ' pixels as a dmp2 record — the same pixel encoding as
+/// bitmap renditions).
+struct SymbolPackedBody: Sendable {
+    var width: UInt32
+    var height: UInt32
+    /// Interleaved gray+alpha bytes (gray plane zero: template glyphs are
+    /// black; alpha carries the coverage).
+    var pixelsGA: [UInt8]
+    /// The atlas scale factor (1, 2, 3).
+    var scale: UInt16
+    /// Rendition name, e.g. "ZZZZPackedAsset-1.0.1-gamut0".
+    var renditionName: String
 }
 
 /// Body of a MultiSized icon rendition (CSI layout 1010, 'MSIS' payload).

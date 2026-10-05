@@ -17,6 +17,12 @@ struct RenditionKey: Hashable, Sendable {
     var identifier: UInt16
     var element: UInt16
     var part: UInt16
+    /// Glyph-weight / glyph-size / deployment-target key tokens. Non-zero
+    /// only on symbol renditions (Regular = 4, Medium = 2, target = 5);
+    /// every other kind leaves them zero, matching actool.
+    var glyphWeight: UInt16
+    var glyphSize: UInt16
+    var deploymentTarget: UInt16
 
     /// CoreUI element IDs that v1 emits. Values dumped from reference
     /// `Assets.car` produced by actool (Xcode 26 / CoreUI 970).
@@ -28,6 +34,9 @@ struct RenditionKey: Hashable, Sendable {
 
     /// CoreUI part IDs that v1 emits.
     enum Part: UInt16 {
+        /// Vector-glyph renditions of `.symbolset` assets (element 85,
+        /// part 59; Apple symbol-oracle key).
+        case vectorGlyph = 59
         /// Used by SpringBoard's icon-render pipeline (`.appiconset`).
         case appIcon = 220
         /// Named colors (`.colorset`). actool keys every color rendition —
@@ -52,11 +61,35 @@ struct RenditionKey: Hashable, Sendable {
         self.scale = rendition.scale?.rawValueByte ?? 0
         self.idiom = rendition.idiom.rawValueByte
         self.subtype = rendition.subtype ?? 0
+        self.glyphWeight = 0
+        self.glyphSize = 0
+        self.deploymentTarget = rendition.deploymentTarget ?? 0
         // Tinted icons re-key their 16-bit gray variant as display-P3
         // (NNW oracle: tint8 gamut token 0, tint16 gamut token 1).
         self.displayGamut = (rendition.gamut == .displayP3) ? 1 : 0
         self.identifier = UInt16(FacetKeys.nameHash(rendition.name) & 0xFFFF)
         switch rendition.body {
+        case .symbolVector(let body):
+            self.element = Element.bitmap.rawValue
+            self.part = Part.vectorGlyph.rawValue
+            self.glyphWeight = body.glyphWeight
+            self.glyphSize = body.glyphSize
+            self.dimension2 = 0
+        case .symbolCached(let body):
+            self.element = Element.bitmap.rawValue
+            self.part = Part.image.rawValue
+            self.glyphWeight = body.glyphWeight
+            self.glyphSize = body.glyphSize
+            // Dimension2 is the Glyph Cached Index: the rank of this
+            // entry's point size among the vector's available sizes.
+            self.dimension2 = body.cachedIndex
+        case .symbolPacked:
+            // Packed cache atlas: its own element category (9), generic
+            // image part, no identifier, no glyph tokens.
+            self.element = 9
+            self.part = Part.image.rawValue
+            self.identifier = 0
+            self.dimension2 = 0
         case .bitmap(let body):
             self.element = Element.bitmap.rawValue
             switch body.kind {
@@ -119,7 +152,10 @@ struct RenditionKey: Hashable, Sendable {
         displayGamut: UInt16 = 0,
         identifier: UInt16 = 0,
         element: UInt16 = 0,
-        part: UInt16 = 0
+        part: UInt16 = 0,
+        glyphWeight: UInt16 = 0,
+        glyphSize: UInt16 = 0,
+        deploymentTarget: UInt16 = 0
     ) {
         self.appearance = appearance
         self.localization = localization
@@ -131,6 +167,9 @@ struct RenditionKey: Hashable, Sendable {
         self.identifier = identifier
         self.element = element
         self.part = part
+        self.glyphWeight = glyphWeight
+        self.glyphSize = glyphSize
+        self.deploymentTarget = deploymentTarget
     }
 
     /// Packs the key as little-endian UInt16 tokens, one per attribute in
@@ -149,9 +188,9 @@ struct RenditionKey: Hashable, Sendable {
             case .subtype: w.writeLE(subtype)
             case .dimension2: w.writeLE(dimension2)
             case .dimension1: w.writeLE(UInt16(0))
-            case .deploymentTarget: w.writeLE(UInt16(0))
-            case .glyphWeight: w.writeLE(UInt16(0))
-            case .glyphSize: w.writeLE(UInt16(0))
+            case .deploymentTarget: w.writeLE(deploymentTarget)
+            case .glyphWeight: w.writeLE(glyphWeight)
+            case .glyphSize: w.writeLE(glyphSize)
             case .displayGamut: w.writeLE(displayGamut)
             case .identifier: w.writeLE(identifier)
             case .element: w.writeLE(element)

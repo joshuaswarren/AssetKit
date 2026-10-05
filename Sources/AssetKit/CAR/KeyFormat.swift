@@ -104,6 +104,21 @@ enum KeyFormat {
         if usesIconIndex { used.insert(.dimension2) }
         if usesAppearance { used.insert(.appearance) }
         if usesGamut { used.insert(.displayGamut) }
+        // Symbol renditions widen the tuple with their weight, size, and
+        // deployment-target slots (Apple symbol oracle: a symbol-only
+        // catalog keys 12 attributes; the full NNW catalog 14 once the
+        // icon's dimension1 pack joins).
+        let usesGlyphs = renditions.contains {
+            switch $0.body {
+            case .symbolVector, .symbolCached: return true
+            default: return false
+            }
+        }
+        if usesGlyphs {
+            used.insert(.glyphWeight)
+            used.insert(.glyphSize)
+            used.insert(.deploymentTarget)
+        }
         return canonicalKeyOrder.filter { used.contains($0) }
     }
 }

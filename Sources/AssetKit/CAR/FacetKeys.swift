@@ -27,6 +27,10 @@ enum FacetKeys {
         case appIcon
         case image
         case color
+        /// `.symbolset` assets. Apple keys the facet at the generic-image
+        /// part and adds the symbol deployment-target pair (Apple symbol
+        /// oracle: (1,85),(2,181),(17,hash),(25,5)).
+        case symbol
 
         func pairs(identifier: UInt16) -> [(UInt16, UInt16)] {
             switch self {
@@ -35,6 +39,13 @@ enum FacetKeys {
                     (UInt16(AttributeID.element.rawValue), RenditionKey.Element.bitmap.rawValue),
                     (UInt16(AttributeID.part.rawValue), RenditionKey.Part.appIcon.rawValue),
                     (UInt16(AttributeID.identifier.rawValue), identifier),
+                ]
+            case .symbol:
+                return [
+                    (UInt16(AttributeID.element.rawValue), RenditionKey.Element.bitmap.rawValue),
+                    (UInt16(AttributeID.part.rawValue), RenditionKey.Part.image.rawValue),
+                    (UInt16(AttributeID.identifier.rawValue), identifier),
+                    (UInt16(AttributeID.deploymentTarget.rawValue), 5),
                 ]
             case .image:
                 return [

@@ -4,7 +4,17 @@ struct LoadedCatalog: Sendable {
     var url: URL
     var imageSets: [LoadedImageSet]
     var colorSets: [LoadedColorSet]
+    var symbolSets: [LoadedSymbolSet]
     var appIcon: LoadedAppIcon?
+}
+
+/// One `.symbolset`: a custom SF Symbol template SVG plus its Contents.json.
+struct LoadedSymbolSet: Sendable {
+    var name: String
+    var directory: URL
+    /// The template SVG filename declared in Contents.json.
+    var filename: String
+    var svgURL: URL { directory.appendingPathComponent(filename) }
 }
 
 struct LoadedImageSet: Sendable {
@@ -39,6 +49,7 @@ struct CatalogLoader: Sendable {
 
         var imageSets: [LoadedImageSet] = []
         var colorSets: [LoadedColorSet] = []
+        var symbolSets: [LoadedSymbolSet] = []
         var appIcons: [LoadedAppIcon] = []
 
         try walk(url, fileManager: fm) { entry in
@@ -51,6 +62,12 @@ struct CatalogLoader: Sendable {
             case "colorset":
                 let contents = try decode(ColorSetContents.self, at: entry, decoder: decoder)
                 colorSets.append(LoadedColorSet(name: name, directory: entry, contents: contents))
+            case "symbolset":
+                let contents = try decode(SymbolSetContents.self, at: entry, decoder: decoder)
+                guard let filename = contents.symbols.first?.filename, !filename.isEmpty else {
+                    throw XCAssetCompilerError.missingReferencedFile(asset: name, filename: "(symbols[0].filename)")
+                }
+                symbolSets.append(LoadedSymbolSet(name: name, directory: entry, filename: filename))
             case "appiconset":
                 let contents = try decode(AppIconContents.self, at: entry, decoder: decoder)
                 appIcons.append(LoadedAppIcon(name: name, directory: entry, contents: contents))
@@ -69,6 +86,7 @@ struct CatalogLoader: Sendable {
             url: url,
             imageSets: imageSets,
             colorSets: colorSets,
+            symbolSets: symbolSets,
             appIcon: appIcons.first
         )
     }
@@ -97,7 +115,7 @@ struct CatalogLoader: Sendable {
             let values = try child.resourceValues(forKeys: [.isDirectoryKey])
             guard values.isDirectory == true else { continue }
             let ext = child.pathExtension
-            if ["imageset", "colorset", "appiconset"].contains(ext) {
+            if ["imageset", "colorset", "appiconset", "symbolset"].contains(ext) {
                 try visit(child)
             } else {
                 try walk(child, fileManager: fm, visit: visit)

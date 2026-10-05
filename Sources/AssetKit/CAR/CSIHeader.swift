@@ -33,6 +33,10 @@ enum CSIHeader {
     /// renderer on the DWAR-wrapped body (NNW oracle).
     static let pixelFormatPDF: UInt32 = 0x50444620
 
+    /// `pixelFormat` = 'GA8 ' (trailing space) as an LE multi-char constant
+    /// (file bytes space,8,A,G; Apple symbol oracle).
+    static let pixelFormatGray8: UInt32 = 0x47413820
+
     /// Layout types observed in the reference. The names are derived from
     /// CoreUI symbol names where known.
     enum Layout: UInt16 {
@@ -50,6 +54,15 @@ enum CSIHeader {
         /// category; SVG promotes to its own layout because vector
         /// renditions surface a different AssetType to `assetutil`.
         case vector = 9
+        /// Symbol-set cached bitmap (GA8, no inline pixels; pixels resolve
+        /// through the TVL-1010 atlas link). Apple symbol oracle.
+        case symbolCache = 1003
+        /// Symbol-set vector glyph ('SVG ' pixelFormat, DWAR-wrapped
+        /// rewritten SVG body). Apple symbol oracle.
+        case symbolGlyph = 1017
+        /// Symbol-set packed cache atlas (GA8 dmp2 pixels). Apple symbol
+        /// oracle.
+        case symbolPacked = 1004
     }
 
     // swiftlint:disable:next function_parameter_count

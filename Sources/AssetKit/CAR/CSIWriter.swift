@@ -154,6 +154,115 @@ enum CSIWriter {
         return header + tvl + envelope
     }
 
+    /// Symbol-set vector glyph (layout 1017, pixelFormat 'SVG ', flags
+    /// 0x04). Header dimensions are zero and the scale factor is 100 (the
+    /// template's "typeset at 100 points"); the body is a DWAR envelope
+    /// wrapping the LZFSE-compressed rewritten SVG.
+    static func symbolVector(body: SymbolVectorBody) -> Data {
+        let tvl = CSITVL.encode([
+            .sliceScale,
+            .bitmapFlag,
+            .glyphMetrics(
+                pointSize: 17,
+                baseline: body.baseline,
+                capline: body.capline,
+                left: body.leftMargin,
+                right: body.rightMargin,
+                sizes: body.availableSizes.map { pairs in
+                    pairs.map { (index: $0.index, pointSize: $0.pointSize) }
+                }
+            ),
+            .glyphSizes,
+        ])
+        let envelope = DWAREnvelope.encode(flags: 1, payload: LZFSE.encode([UInt8](body.svg)))
+        let header = CSIHeader.encode(
+            renditionFlags: 0x04,
+            width: 0,
+            height: 0,
+            scaleFactor: 100,
+            pixelFormat: CSIHeader.pixelFormatSVG,
+            colorSpace: 0,
+            layout: .symbolGlyph,
+            name: body.renditionName,
+            tvlLength: UInt32(tvl.count),
+            bitmapCount: 1,
+            renditionLength: UInt32(envelope.count)
+        )
+        return header + tvl + envelope
+    }
+
+    /// Symbol-set cached bitmap (layout 1003, pixelFormat 'GA8 ', flags
+    /// 0x04, gray gamma 22). No inline pixels: the body is only the TVL
+    /// chain, whose 1010 link keys the packed atlas that holds the pixels.
+    static func symbolCached(body: SymbolCachedBody, scaleFactor: UInt32) -> Data {
+        // The atlas link's key pairs are the packed rendition's nonzero key
+        // tokens (element 9 — the packed category, not the bitmap 85 —
+        // part, scale, deployment target), ascending.
+        let linkKeyPairs: [(UInt16, UInt16)] = [
+            (UInt16(AttributeID.element.rawValue), 9),
+            (UInt16(AttributeID.part.rawValue), RenditionKey.Part.image.rawValue),
+            (UInt16(AttributeID.scale.rawValue), scaleFactor == 300 ? 3 : (scaleFactor == 200 ? 2 : 1)),
+            (UInt16(AttributeID.deploymentTarget.rawValue), 5),
+        ]
+        let tvl = CSITVL.encode([
+            .bitmapDescriptor(width: body.width, height: body.height),
+            .destRect(width: body.width, height: body.height),
+            .symbolLink(
+                x: body.atlasX, y: body.atlasY,
+                width: body.width, height: body.height,
+                keyPairs: linkKeyPairs
+            ),
+            .sliceScale,
+            .bitmapFlag,
+        ])
+        let header = CSIHeader.encode(
+            renditionFlags: 0x04,
+            width: body.width,
+            height: body.height,
+            scaleFactor: scaleFactor,
+            pixelFormat: CSIHeader.pixelFormatGray8,
+            colorSpace: 2,
+            layout: .symbolCache,
+            name: body.renditionName,
+            tvlLength: UInt32(tvl.count),
+            bitmapCount: 1,
+            renditionLength: 0
+        )
+        return header + tvl
+    }
+
+    /// Symbol-set packed cache atlas (layout 1004, pixelFormat 'GA8 ',
+    /// flags 0): header dims are the atlas size and the body is a dmp2
+    /// pixel record like any GA8 bitmap.
+    static func symbolPacked(body: SymbolPackedBody, scaleFactor: UInt32) -> Data {
+        let tvl = CSITVL.encode([
+            .bitmapDescriptor(width: body.width, height: body.height),
+            .sliceScale,
+            .bitmapFlag,
+            .bytesPerRow(width: body.width, bytesPerPixel: 2),
+        ])
+        let payload = MLECBody.encode(
+            width: body.width,
+            height: body.height,
+            bytesPerPixel: 2,
+            pixels: body.pixelsGA
+        )
+        let header = CSIHeader.encode(
+            renditionFlags: 0,
+            width: body.width,
+            height: body.height,
+            scaleFactor: scaleFactor,
+            pixelFormat: CSIHeader.pixelFormatGray8,
+            colorSpace: 2,
+            layout: .symbolPacked,
+            name: body.renditionName,
+            tvlLength: UInt32(tvl.count),
+            bitmapCount: 1,
+            renditionLength: UInt32(payload.count)
+        )
+        return header + tvl + payload
+    }
+
     /// MultiSized icon container (layout 1010). Header dimensions, scale,
     /// pixelFormat and colorSpace are all zero like named colors; TVL is the
     /// same all-zero 1004 + 1006:1 pair. The name is the ASSET name (not a

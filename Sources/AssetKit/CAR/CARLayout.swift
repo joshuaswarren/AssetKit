@@ -23,7 +23,13 @@ struct CARLayout {
     let usedAppearances: Set<UInt16>
 
     init(renditions: [Rendition]) {
-        let grouped = Dictionary(grouping: renditions, by: \.name)
+        // Packed symbol atlases belong to no facet: Apple emits no
+        // FACETKEYS or BITMAPKEYS row for them.
+        let facetRenditions = renditions.filter { rendition in
+            if case .symbolPacked = rendition.body { return false }
+            return true
+        }
+        let grouped = Dictionary(grouping: facetRenditions, by: \.name)
         self.assets = grouped.keys.sorted().map { name in
             // `grouped[name]!` is safe: we are iterating its own keys.
             let assetRenditions = grouped[name]!
@@ -54,6 +60,13 @@ struct CARLayout {
             case .image: return .image
             }
         case .color: return .color
+        case .symbolPacked: return .image
+        // Symbol-set renditions classify the asset as a symbol facet
+        // (element 85 / part 181 plus the deployment-target pair).
+        case .symbolVector, .symbolCached: return .symbol
+        // The packed atlas belongs to no facet (no BITMAPKEYS row of its
+        // own in the Apple oracles).
+        case .symbolPacked: return .image
         // MultiSized containers share the appicon facet — they are part of
         // the same asset and only ever accompany .appIcon bitmap renditions,
         // which classify the facet first anyway.

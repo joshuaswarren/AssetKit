@@ -98,6 +98,9 @@ public struct XCAssetCompiler: Sendable {
         for colorSet in loaded.colorSets {
             renditions.append(contentsOf: try ColorRenderer.renditions(for: colorSet))
         }
+        for symbolSet in loaded.symbolSets {
+            renditions.append(contentsOf: try SymbolRenderer.renditions(for: symbolSet, svgRasterizer: svgRasterizer))
+        }
 
         var appIconBundle: AppIconBundle?
         if let appIcon = loaded.appIcon {

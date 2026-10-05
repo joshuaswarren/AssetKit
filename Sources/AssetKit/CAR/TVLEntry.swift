@@ -39,6 +39,30 @@ enum TVLEntry {
     /// 2 for GA8).
     case bytesPerRow(width: UInt32, bytesPerPixel: UInt32)
 
+    /// Type 1010 (50-byte value): symbol-cache link to the packed atlas.
+    /// `x`/`y`/`width`/`height` place this cache entry's bitmap inside the
+    /// atlas; the trailing key pairs (ascending attribute id, nonzero
+    /// tokens of the packed rendition's key) let CoreUI resolve the atlas
+    /// by key. Apple symbol oracle: (1, 9), (2, 181), (12, scale), (25, 5)
+    /// with a (0, 0) terminator.
+    case symbolLink(
+        x: UInt32, y: UInt32, width: UInt32, height: UInt32, keyPairs: [(UInt16, UInt16)])
+
+    /// Type 1018: symbol font metrics. `pointSize` is the reference size
+    /// (17); the floats are baseline, capline, 0, left margin, right
+    /// margin, left margin, right margin at that size. `sizes` carries the
+    /// (cachedIndex, pointSize) pairs — present only on the Medium vector.
+    case glyphMetrics(
+        pointSize: UInt32,
+        baseline: Float,
+        capline: Float,
+        left: Float,
+        right: Float,
+        sizes: [(index: UInt32, pointSize: UInt32)]?)
+
+    /// Type 1019 (12-byte value): symbol glyph flags, always (1, 0, 0).
+    case glyphSizes
+
     func encode(into w: inout ByteWriter) {
         switch self {
         case .bitmapDescriptor(let width, let height):
@@ -82,6 +106,53 @@ enum TVLEntry {
             let bytesPerRow = width * bytesPerPixel
             let aligned = (bytesPerRow + 15) & ~15
             w.writeLE(aligned)
+        case .symbolLink(let x, let y, let width, let height, let keyPairs):
+            w.writeLE(UInt32(1010))
+            w.writeLE(UInt32(4 + 4 + 16 + 2 + 4 + keyPairs.count * 4 + 4))
+            // 'INLK' as an LE multi-char constant (file bytes K,L,N,I), the
+            // same convention as CTSI. Version, atlas placement, then the
+            // inline key: u16 flags, u32 key-data length (pairs + (0,0)
+            // terminator), ascending (attribute, value) pairs.
+            w.writeLE(UInt32(0x494E4C4B))
+            w.writeLE(UInt32(0))
+            w.writeLE(x)
+            w.writeLE(y)
+            w.writeLE(width)
+            w.writeLE(height)
+            w.writeLE(UInt16(0))
+            w.writeLE(UInt32(keyPairs.count * 4 + 4))
+            for (attribute, value) in keyPairs {
+                w.writeLE(attribute)
+                w.writeLE(value)
+            }
+            w.writeLE(UInt16(0))
+            w.writeLE(UInt16(0))
+        case .glyphMetrics(let pointSize, let baseline, let capline, let left, let right, let sizes):
+            w.writeLE(UInt32(1018))
+            var value = ByteWriter()
+            value.writeLE(UInt32(3))
+            value.writeLE(pointSize)
+            value.writeLE(baseline.bitPattern)
+            value.writeLE(capline.bitPattern)
+            value.writeLE(Float(0).bitPattern)
+            value.writeLE(left.bitPattern)
+            value.writeLE(right.bitPattern)
+            value.writeLE(left.bitPattern)
+            value.writeLE(right.bitPattern)
+            let pairs = sizes ?? []
+            value.writeLE(UInt32(pairs.count))
+            for (index, size) in pairs {
+                value.writeLE(index)
+                value.writeLE(size)
+            }
+            w.writeLE(UInt32(value.offset))
+            w.write(value.data)
+        case .glyphSizes:
+            w.writeLE(UInt32(1019))
+            w.writeLE(UInt32(12))
+            w.writeLE(UInt32(1))
+            w.writeLE(UInt32(0))
+            w.writeLE(UInt32(0))
         }
     }
 }
