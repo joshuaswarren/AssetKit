@@ -305,12 +305,14 @@ public enum IconComposerCompiler {
 
         // Decode every referenced layer image once.
         var images: [String: LoadedImage] = [:]
+        var svgSources: [String: Data] = [:]
         for group in model.groups {
             for layer in group.layers {
                 guard images[layer.imageName] == nil else { continue }
                 let url = assets.appendingPathComponent(layer.imageName)
                 let data = try Data(contentsOf: url)
                 if layer.imageName.lowercased().hasSuffix(".svg") {
+                    svgSources[layer.imageName] = data
                     let (w, h) = svgPixelSize(data)
                     let png = try RsvgConvertRasterizer()
                         .rasterize(svgData: data, pixelWidth: UInt32(w), pixelHeight: UInt32(h))
@@ -402,14 +404,24 @@ public enum IconComposerCompiler {
             let stem = facetStem(imageName)
             let facet = "\(input.name)_Assets/\(stem)"
             imageIdentifiers[stem] = UInt16(FacetKeys.nameHash(facet) & 0xFFFF)
-            let image = images[imageName]!
-            imageRenditions.append(Rendition(
-                name: facet, idiom: .universal, scale: .x1, appearance: nil,
-                iconComposerSource: true,
-                body: .bitmap(BitmapBody(
-                    width: UInt32(image.width), height: UInt32(image.height),
-                    pixelsBGRA: premultipliedBGRA(image), colorSpaceID: 1, kind: .image,
-                    renditionName: "image.png"))))
+            if let svg = svgSources[imageName] {
+                // Apple stores Icon Composer SVG layers as scale-free vectors
+                // (CSI name image.svg, 0x0). A raster here makes assetutil SIGSEGV.
+                imageRenditions.append(Rendition(
+                    name: facet, idiom: .universal, scale: .x1, appearance: nil,
+                    iconComposerSource: true,
+                    body: .preservedSource(PreservedSourceBody(
+                        format: .svg, sourceData: svg, renditionName: "image.svg"))))
+            } else {
+                let image = images[imageName]!
+                imageRenditions.append(Rendition(
+                    name: facet, idiom: .universal, scale: .x1, appearance: nil,
+                    iconComposerSource: true,
+                    body: .bitmap(BitmapBody(
+                        width: UInt32(image.width), height: UInt32(image.height),
+                        pixelsBGRA: premultipliedBGRA(image), colorSpaceID: 1, kind: .image,
+                        renditionName: "image.png"))))
+            }
         }
 
         // Groups, one rendition per (group, appearance). Group facet names:
@@ -421,16 +433,16 @@ public enum IconComposerCompiler {
             groupFacets.append((facet, UInt16(FacetKeys.nameHash(facet) & 0xFFFF), group))
             for appearance in appearances {
                 let layers = group.layers.map { layer -> IconGroupLayer in
-                    let size = max(1, Int((Double(canvasSide) * layer.scale).rounded()))
-                    let half = Int32((-(Double(size - canvasSide)) / 2).rounded())
+                    let image = images[layer.imageName]!
+                    let rect = placedRect(image: image, layer: layer, group: group)
                     return IconGroupLayer(
                         imageFacetName: "",
                         imageIdentifier: imageIdentifiers[facetStem(layer.imageName)] ?? 0,
-                        positionX: half + Int32(layer.translation.0.rounded()),
-                        positionY: half + Int32(layer.translation.1.rounded()),
-                        width: UInt32(size), height: UInt32(size),
+                        positionX: Int32(rect.ox),
+                        positionY: Int32(rect.oy),
+                        width: UInt32(rect.w), height: UInt32(rect.h),
                         blendMode: blendWord(layer, appearance),
-                        opacity: 1,
+                        opacity: resolveOpacity(layer.opacities, appearance: appearance),
                         fillName: fillName(layer, appearance))
                 }
                 groupRenditions.append(Rendition(
