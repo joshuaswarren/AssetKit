@@ -54,19 +54,21 @@ public enum IconComposerCompiler {
         var imageName: String
         var scale: Double
         var translation: (Double, Double)
-        var fills: [[String: Any]]   // fill-specializations, verbatim
-        var blends: [[String: Any]]  // blend-mode-specializations, verbatim
+        var fills: [[String: Any]]
+        var blends: [[String: Any]]
+        var opacities: [[String: Any]]
         var glass: Bool
     }
 
     struct Group {
         var layers: [Layer]
+        var scale: Double
+        var translation: (Double, Double)
         var blurStrength: Double
         var shadowStyle: UInt32
         var shadowOpacity: Double
-        /// "layer-color" (colored shadow) or "neutral".
         var shadowKind: String?
-        var translucency: [[String: Any]] // translucency-specializations
+        var translucency: [[String: Any]]
     }
 
     struct IconModel {
@@ -80,35 +82,59 @@ public enum IconComposerCompiler {
         var description: String { "icon.json is not a JSON object" }
     }
 
+    static func jsonDoubles(_ value: Any?) -> [Double] {
+        if let values = value as? [Double] { return values }
+        if let values = value as? [NSNumber] { return values.map(\.doubleValue) }
+        guard let values = value as? [Any] else { return [] }
+        return values.compactMap { ($0 as? NSNumber)?.doubleValue }
+    }
+
     static func parseModel(_ json: [String: Any]) throws -> IconModel {
         var groups: [Group] = []
         for group in json["groups"] as? [[String: Any]] ?? [] {
+            let groupPosition = group["position"] as? [String: Any] ?? [:]
+            let groupTranslation = jsonDoubles(groupPosition["translation-in-points"])
             var layers: [Layer] = []
             for layer in group["layers"] as? [[String: Any]] ?? [] {
                 guard layer["hidden"] as? Bool != true else { continue }
                 let position = layer["position"] as? [String: Any] ?? [:]
-                let translation = position["translation-in-points"] as? [Double] ?? [0, 0]
+                let translation = jsonDoubles(position["translation-in-points"])
+                var opacities = layer["opacity-specializations"] as? [[String: Any]] ?? []
+                if opacities.isEmpty, let opacity = layer["opacity"] {
+                    opacities = [["value": opacity]]
+                }
                 layers.append(Layer(
                     imageName: layer["image-name"] as? String ?? "",
-                    scale: position["scale"] as? Double ?? 1,
+                    scale: (position["scale"] as? NSNumber)?.doubleValue ?? 1,
                     translation: (translation.first ?? 0, translation.count > 1 ? translation[1] : 0),
                     fills: layer["fill-specializations"] as? [[String: Any]] ?? [],
                     blends: layer["blend-mode-specializations"] as? [[String: Any]] ?? [],
-                    glass: layer["glass"] as? Bool ?? false))
+                    opacities: opacities,
+                    glass: layer["glass"] as? Bool ?? true))
             }
             let shadow = group["shadow"] as? [String: Any]
             let blur = (group["blur-material"] as? NSNumber)?.doubleValue
                 ?? (group["blur-material-specializations"] as? [[String: Any]] ?? [])
                     .first { $0["appearance"] == nil }.flatMap { ($0["value"] as? NSNumber)?.doubleValue }
+            var translucency = group["translucency-specializations"] as? [[String: Any]] ?? []
+            if translucency.isEmpty, let direct = group["translucency"] as? [String: Any] {
+                translucency = [["value": direct]]
+            }
             groups.append(Group(
                 layers: layers,
+                scale: (groupPosition["scale"] as? NSNumber)?.doubleValue ?? 1,
+                translation: (groupTranslation.first ?? 0, groupTranslation.count > 1 ? groupTranslation[1] : 0),
                 blurStrength: blur ?? 0,
-                shadowStyle: shadow == nil ? 0 : 2,  // kind layer-color -> style 2 (oracle)
-                shadowOpacity: shadow?["opacity"] as? Double ?? 0,
+                shadowStyle: shadow == nil ? 0 : 2,
+                shadowOpacity: (shadow?["opacity"] as? NSNumber)?.doubleValue ?? 0,
                 shadowKind: shadow?["kind"] as? String,
-                translucency: group["translucency-specializations"] as? [[String: Any]] ?? []))
+                translucency: translucency))
         }
-        return IconModel(fills: json["fill-specializations"] as? [[String: Any]] ?? [], groups: groups)
+        var fills = json["fill-specializations"] as? [[String: Any]] ?? []
+        if fills.isEmpty, let fill = json["fill"] {
+            fills = [["value": fill]]
+        }
+        return IconModel(fills: fills, groups: groups)
     }
 
     // MARK: - Colors and fills
@@ -192,13 +218,17 @@ public enum IconComposerCompiler {
         return (specializations.first { matches($0) } ?? specializations.first { $0["appearance"] == nil })?["value"]
     }
 
+    static func resolveOpacity(_ specializations: [[String: Any]], appearance: Appearance?) -> Float {
+        guard let value = specializedValue(specializations, appearance: appearance) else { return 1 }
+        return (value as? NSNumber)?.floatValue ?? 1
+    }
+
     /// Resolves the translucency value for one appearance: enabled ? value : 0.
     static func resolveTranslucency(_ specializations: [[String: Any]], appearance: Appearance?) -> Float {
         guard let dict = specializedValue(specializations, appearance: appearance) as? [String: Any],
               let value = dict["value"] as? Double else { return 0 }
         return (dict["enabled"] as? Bool ?? true) ? Float(value) : 0
     }
-
     // MARK: - Rendering
 
     /// Straight-alpha 8-bit pixel of a decoded layer image.
@@ -210,6 +240,7 @@ public enum IconComposerCompiler {
 
     struct LoadedImage {
         var width: Int
+        var height: Int
         var pixels: [Pixel]
     }
 
@@ -226,8 +257,32 @@ public enum IconComposerCompiler {
         var stream = Bytestream(bytes: [UInt8](bytes))
         let image = try PNG.Image.decompress(stream: &stream)
         let rgba = image.unpack(as: PNG.RGBA<UInt8>.self)
-        return LoadedImage(width: image.size.x, pixels: rgba.map { Pixel(r: $0.r, g: $0.g, b: $0.b, a: $0.a) })
+        return LoadedImage(width: image.size.x, height: image.size.y, pixels: rgba.map { Pixel(r: $0.r, g: $0.g, b: $0.b, a: $0.a) })
     }
+    static func svgPixelSize(_ data: Data) -> (Int, Int) {
+        let text = String(decoding: data.prefix(512), as: UTF8.self)
+        func attr(_ name: String) -> Int? {
+            guard let range = text.range(of: "\(name)=\"") else { return nil }
+            let token = text[range.upperBound...].prefix { $0.isNumber || $0 == "." }
+            guard let value = Double(token) else { return nil }
+            return max(1, Int(value.rounded()))
+        }
+        return (attr("width") ?? canvasSide, attr("height") ?? canvasSide)
+    }
+
+    /// Image pixels times scale, centered, plus layer and group translation. Origin is floored:
+    /// half-pixel translations in AppIconAlternate2 land on the assetutil LayerPosition.
+    static func placedRect(image: LoadedImage, layer: Layer, group: Group) -> (ox: Int, oy: Int, w: Int, h: Int) {
+        let s = layer.scale * group.scale
+        let w = max(1, Int((Double(image.width) * s).rounded()))
+        let h = max(1, Int((Double(image.height) * s).rounded()))
+        let tx = layer.translation.0 * group.scale + group.translation.0
+        let ty = layer.translation.1 * group.scale + group.translation.1
+        let ox = Int(((Double(canvasSide - w) / 2) + tx).rounded(.down))
+        let oy = Int(((Double(canvasSide - h) / 2) + ty).rounded(.down))
+        return (ox, oy, w, h)
+    }
+
 
     /// Renders the 1024 px pre-render for one appearance as opaque BGRA, following
     /// IconRendering's display list (GlassRender).
@@ -251,13 +306,14 @@ public enum IconComposerCompiler {
             for layer in group.layers {
                 guard images[layer.imageName] == nil else { continue }
                 let url = assets.appendingPathComponent(layer.imageName)
+                let data = try Data(contentsOf: url)
                 if layer.imageName.lowercased().hasSuffix(".svg") {
+                    let (w, h) = svgPixelSize(data)
                     let png = try RsvgConvertRasterizer()
-                        .rasterize(svgData: Data(contentsOf: url),
-                                   pixelWidth: UInt32(canvasSide), pixelHeight: UInt32(canvasSide))
+                        .rasterize(svgData: data, pixelWidth: UInt32(w), pixelHeight: UInt32(h))
                     images[layer.imageName] = try decodePNG(png)
                 } else {
-                    images[layer.imageName] = try decodePNG(Data(contentsOf: url))
+                    images[layer.imageName] = try decodePNG(data)
                 }
             }
         }
@@ -348,7 +404,7 @@ public enum IconComposerCompiler {
                 name: facet, idiom: .universal, scale: .x1, appearance: nil,
                 iconComposerSource: true,
                 body: .bitmap(BitmapBody(
-                    width: UInt32(image.width), height: UInt32(image.width),
+                    width: UInt32(image.width), height: UInt32(image.height),
                     pixelsBGRA: premultipliedBGRA(image), colorSpaceID: 1, kind: .image,
                     renditionName: "image.png"))))
         }
