@@ -510,17 +510,10 @@ enum GlassRender {
                         for x in 0..<n {
                             let i = y * n + x
                             let ia = placed.a[i]
-                            if blend == "lighten" || blend == "screen", ia > 1e-5 {
+                            if blend == "lighten", ia > 1e-5 {
                                 let ir = placed.r[i] / ia, ig = placed.g[i] / ia, ib = placed.b[i] / ia
                                 let sa = c.3
-                                let br: Float, bg: Float, bb: Float
-                                if blend == "lighten" {
-                                    br = max(ir, c.0); bg = max(ig, c.1); bb = max(ib, c.2)
-                                } else {
-                                    br = 1 - (1 - ir) * (1 - c.0)
-                                    bg = 1 - (1 - ig) * (1 - c.1)
-                                    bb = 1 - (1 - ib) * (1 - c.2)
-                                }
+                                let br = max(ir, c.0), bg = max(ig, c.1), bb = max(ib, c.2)
                                 let rr = (1 - sa) * ir + sa * br
                                 let rg = (1 - sa) * ig + sa * bg
                                 let rb = (1 - sa) * ib + sa * bb
