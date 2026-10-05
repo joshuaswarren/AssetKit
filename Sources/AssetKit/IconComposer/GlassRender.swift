@@ -498,7 +498,6 @@ enum GlassRender {
                 let rect = C.placedRect(image: image, layer: layer, group: group)
                 let (ox, oy, pw, ph) = (rect.ox, rect.oy, rect.w, rect.h)
                 var placed = place(image, size: (pw, ph), origin: (ox, oy))
-                let blend = C.specializedValue(layer.blends, appearance: appearance) as? String
                 if let fill = C.resolveFill(layer.fills, appearance: appearance) {
                     for y in 0..<n {
                         let t = sat((Float(y - oy) + 0.5) / Float(ph))
@@ -513,19 +512,8 @@ enum GlassRender {
                         }
                         for x in 0..<n {
                             let i = y * n + x
-                            let ia = placed.a[i]
-                            if blend == "lighten", ia > 1e-5 {
-                                let ir = placed.r[i] / ia, ig = placed.g[i] / ia, ib = placed.b[i] / ia
-                                let sa = c.3
-                                let br = max(ir, c.0), bg = max(ig, c.1), bb = max(ib, c.2)
-                                let rr = (1 - sa) * ir + sa * br
-                                let rg = (1 - sa) * ig + sa * bg
-                                let rb = (1 - sa) * ib + sa * bb
-                                placed.r[i] = rr * ia; placed.g[i] = rg * ia; placed.b[i] = rb * ia
-                            } else {
-                                let a = ia * c.3
-                                placed.r[i] = c.0 * a; placed.g[i] = c.1 * a; placed.b[i] = c.2 * a; placed.a[i] = a
-                            }
+                            let a = placed.a[i] * c.3
+                            placed.r[i] = c.0 * a; placed.g[i] = c.1 * a; placed.b[i] = c.2 * a; placed.a[i] = a
                         }
                     }
                 }
@@ -550,7 +538,7 @@ enum GlassRender {
                 minY = min(minY, oy)
                 maxY = max(maxY, oy + ph)
             }
-            if minY < maxY { bounds = (Float(minY) - 0.57, Float(maxY - minY) * 1.002) }
+            if minY < maxY { let k: Float = 1026 / 1024; bounds = (Float(minY) * k, Float(maxY - minY) * k) }
             // shadow: the group image (or black) blurred 22.4 at +16/+16, plus-darker
             if group.shadowStyle != 0 {
                 let colored = !tinted && group.shadowKind == "layer-color"
