@@ -48,20 +48,18 @@ struct IconGroupLayer: Sendable {
     var imageFacetName: String
     /// The image facet's NameIdentifier.
     var imageIdentifier: UInt16
-    /// Layer rect: points relative to the 1024 pt canvas. actool centers the
-    /// scaled image about the canvas and adds the translation:
-    /// size = round(1024 * scale), position = -((size - 1024) / 2) + translation.
+    /// Layer rect: points relative to the 1024 pt canvas.
     var positionX: Int32
     var positionY: Int32
     var width: UInt32
     var height: UInt32
-    /// CoreUI blend word. 0 = normal, 5 = lighten (IceCubes oracle: the dark
-    /// variant of a lighten layer carries 5, the light and tinted ones 0).
+    /// CoreUI blend word. 0 = normal, 5 = lighten.
     var blendMode: UInt32
     var opacity: Float
-    /// Facet name of the resolved fill (solid color or gradient) for this
-    /// appearance, or nil when the layer has no fill ("automatic" / unset).
+    /// Facet name of the resolved fill, or nil when the layer has none.
     var fillName: String?
+    /// `glass: false` clears this. assetutil calls it LayerHasLightingEffects.
+    var hasLighting: Bool = true
 }
 
 /// An Icon Composer group ("IconGroup", CSI layout 1020). One rendition per
@@ -190,13 +188,14 @@ extension CSIWriter {
     static func iconGroup(name: String, body: IconGroupBody) -> Data {
         _ = name  // the CSI name comes from the body; the facet name keys the rendition
         precondition(!body.layers.isEmpty, "Icon Composer groups have at least one layer")
-        // 0x3f4 payload (56 bytes, one layer): layer count, two zero words,
-        // position x/y (i32), size w/h (u32), blend word, opacity float,
-        // flags 0x10, then per layer the 16-byte facet reference.
+        // 0x3f4: count, two zero words, then per layer 28 bytes of geometry,
+        // the 16-byte facet reference, and a 4-byte pad (omitted on the last
+        // layer). A one-layer group is the old packed layout, which is what
+        // the IceCubes fixture pins.
         var layers = ByteWriter()
         layers.writeLE(UInt32(body.layers.count))
         layers.writeZeros(8)
-        for layer in body.layers {
+        for (index, layer) in body.layers.enumerated() {
             layers.writeLE(UInt32(bitPattern: layer.positionX))
             layers.writeLE(UInt32(bitPattern: layer.positionY))
             layers.writeLE(layer.width)
@@ -204,35 +203,47 @@ extension CSIWriter {
             layers.writeLE(layer.blendMode)
             layers.writeLE(layer.opacity.bitPattern)
             layers.writeLE(UInt32(0x10))
-        }
-        for layer in body.layers {
             layers.write(LayeredRenditions.referencePairs(part: 181, identifier: layer.imageIdentifier))
+            if index + 1 < body.layers.count {
+                layers.writeZeros(4)
+            }
         }
         let f4 = Array(layers.data)
 
-        // 0x3fc: fill record — four words (1, 0, 1, 0), then the fill facet
-        // name as u32 byte length + NUL-terminated name. No fill: length 1
-        // and a bare NUL.
+        // 0x3fc. One layer keeps the IceCubes bytes (count, 0, lighting, 0,
+        // then a length-prefixed name or length 1 + NUL). Several layers are
+        // 13-byte slots — 0, lighting, 0, 0x01 — plus a zero trailer. assetutil
+        // reads one slot per layer and SIGSEGVs on the one-slot form.
         var fill = ByteWriter()
-        fill.writeLE(UInt32(1))
-        fill.writeLE(UInt32(0))
-        fill.writeLE(UInt32(1))
-        fill.writeLE(UInt32(0))
-        if let fillName = body.layers.first?.fillName {
-            let bytes = Array((fillName + "\0").utf8)
-            fill.writeLE(UInt32(bytes.count))
-            fill.write(bytes)
+        fill.writeLE(UInt32(body.layers.count))
+        if body.layers.count == 1 {
+            let layer = body.layers[0]
+            fill.writeLE(UInt32(0))
+            fill.writeLE(UInt32(layer.hasLighting ? 1 : 0))
+            fill.writeLE(UInt32(0))
+            if let fillName = layer.fillName {
+                let bytes = Array((fillName + "\0").utf8)
+                fill.writeLE(UInt32(bytes.count))
+                fill.write(bytes)
+            } else {
+                fill.writeLE(UInt32(1))
+                fill.write([0x00])
+            }
         } else {
-            fill.writeLE(UInt32(1))
-            fill.write([0x00])
+            for layer in body.layers {
+                fill.writeLE(UInt32(0))
+                fill.writeLE(UInt32(layer.hasLighting ? 1 : 0))
+                fill.writeLE(UInt32(0))
+                fill.write([0x01])
+            }
+            fill.writeZeros(4)
         }
         let ffc = Array(fill.data)
 
-        // Group slots: 1 + six zero words (28 bytes); Apple carries no
-        // group-level data here — translucency and shadow live on the
-        // stack's child records.
-        let groupSlots = concat(one, .init(repeating: 0, count: 24))
-        let groupFlags = concat(one, .init(repeating: 0, count: 16))
+        // 0x3fd / 0x3fe scale with the layer count. One layer is 28 and 20
+        // bytes, which is what IceCubes pins.
+        let groupSlots = concat(one, .init(repeating: 0, count: 20 * body.layers.count + 4))
+        let groupFlags = concat(one, .init(repeating: 0, count: 12 * body.layers.count + 4))
         let entries: [TVLEntry] = [
             .rawBytes(tag: 0x3f4, payload: Array(f4)),
             .rawBytes(tag: 0x3fc, payload: Array(ffc)),

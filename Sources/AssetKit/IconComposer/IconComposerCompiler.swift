@@ -443,7 +443,8 @@ public enum IconComposerCompiler {
                         width: UInt32(rect.w), height: UInt32(rect.h),
                         blendMode: blendWord(layer, appearance),
                         opacity: resolveOpacity(layer.opacities, appearance: appearance),
-                        fillName: fillName(layer, appearance))
+                        fillName: fillName(layer, appearance),
+                        hasLighting: layer.glass)
                 }
                 groupRenditions.append(Rendition(
                     name: facet, idiom: .universal, scale: .x1,
