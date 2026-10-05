@@ -7,7 +7,8 @@ import Foundation
 enum ImageRenderer {
     static func renditions(
         for set: LoadedImageSet,
-        svgRasterizer: any SVGRasterizer
+        svgRasterizer: any SVGRasterizer,
+        pdfRasterizer: any PDFRasterizer
     ) throws -> [Rendition] {
         var out: [Rendition] = []
         for image in set.contents.images {
@@ -54,6 +55,28 @@ enum ImageRenderer {
                     filename: filename
                 )
                 out.append(contentsOf: try JPEGSource.renditions(bytes: bytes, context: ctx))
+            case .pdf:
+                let properties = set.contents.properties
+                let intent: BitmapBody.RenderingIntent = switch properties?
+                    .templateRenderingIntent {
+                case "template": .template
+                case "original": .original
+                case "automatic": .automatic
+                default: .unspecified
+                }
+                let ctx = PDFSource.Context(
+                    assetName: set.name,
+                    idiom: image.idiom,
+                    appearance: appearance,
+                    filename: filename,
+                    preservesVectorRepresentation: properties?.preservesVectorRepresentation ?? false,
+                    renderingIntent: intent
+                )
+                out.append(contentsOf: try PDFSource.renditions(
+                    bytes: bytes,
+                    context: ctx,
+                    rasteriser: pdfRasterizer
+                ))
             }
         }
         return out

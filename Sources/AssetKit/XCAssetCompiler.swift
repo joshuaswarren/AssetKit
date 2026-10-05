@@ -67,13 +67,19 @@ public struct XCAssetCompiler: Sendable {
     /// when you need a different rasteriser (no PATH dep, different
     /// performance profile, sandbox restrictions, etc).
     public var svgRasterizer: any SVGRasterizer
+    /// Strategy used to measure and rasterise `.pdf` sources. Defaults to
+    /// `PdftoCairoRasterizer`, which shells out to poppler's `pdfinfo` and
+    /// `pdftocairo`. Replace when you need a different rasteriser.
+    public var pdfRasterizer: any PDFRasterizer
 
     public init(
         deploymentTarget: String,
-        svgRasterizer: any SVGRasterizer = RsvgConvertRasterizer()
+        svgRasterizer: any SVGRasterizer = RsvgConvertRasterizer(),
+        pdfRasterizer: any PDFRasterizer = PdftoCairoRasterizer()
     ) {
         self.deploymentTarget = deploymentTarget
         self.svgRasterizer = svgRasterizer
+        self.pdfRasterizer = pdfRasterizer
     }
 
     public func compile(catalog catalogURL: URL) async throws -> CompileResult {
@@ -85,7 +91,8 @@ public struct XCAssetCompiler: Sendable {
         for imageSet in loaded.imageSets {
             renditions.append(contentsOf: try ImageRenderer.renditions(
                 for: imageSet,
-                svgRasterizer: svgRasterizer
+                svgRasterizer: svgRasterizer,
+                pdfRasterizer: pdfRasterizer
             ))
         }
         for colorSet in loaded.colorSets {

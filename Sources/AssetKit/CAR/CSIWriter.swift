@@ -40,21 +40,31 @@ enum CSIWriter {
             pixels: body.pixelsBGRA
         )
 
-        // Bit 4 (0x10): generic-image category; set for `.image`, cleared
-        // for `.appIcon`. Matches what UIImage(named:) walks for imageset
-        // resolution.
+        // Native-bitmap category bit (0x10): set for `.image`, cleared for
+        // `.appIcon`.
         //
-        // Bits 2 and 8 (0x104): set when this bitmap was rasterised from a
-        // vector source (SVG / PDF). Matches actool's reference output for
-        // SVG-rasterised bitmaps (flags=0x114 vs flags=0x10 for native PNG).
-        // Bit 2 (0x04) is also set on the standalone vector source rendition
-        // emitted from `preservedSource(.svg)`; the pair (0x04, 0x100)
-        // together appears to mark "rendition is a raster derived from a
-        // vector source", letting CoreUI's runtime branch into the
-        // re-rasterise-from-vector path at non-intrinsic sizes.
-        var renditionFlags: UInt32 = (body.kind == .image) ? 0x10 : 0x00
+        // Vector-rasterised bitmaps drop the category bit; their flag bits
+        // are 0x04 ("raster derived from a vector source"), 0x100 when the
+        // vector data is also preserved in the car, and the
+        // template-rendering-intent in the low bits (template 0x8,
+        // automatic/unspecified 0x10, original none). Verified against the
+        // NNW oracle: preserving original-intent sets 0x104, non-preserving
+        // ones 0x4, faviconTemplateImage (automatic) 0x14, disclosure
+        // (template) 0xc; SVG imagesets keep 0x114 (unspecified intent
+        // behaves as automatic). PNG / appicon bitmaps are unchanged.
+        let renditionFlags: UInt32
         if body.derivedFromVector {
-            renditionFlags |= 0x104
+            let intentBits: UInt32
+            switch body.renderingIntent {
+            case .template: intentBits = 0x8
+            case .original: intentBits = 0x0
+            case .automatic, .unspecified: intentBits = 0x10
+            }
+            renditionFlags = 0x4
+                | intentBits
+                | (body.preservesVectorRepresentation ? 0x100 : 0)
+        } else {
+            renditionFlags = (body.kind == .image) ? 0x10 : 0x00
         }
 
         let header = CSIHeader.encode(
@@ -114,6 +124,16 @@ enum CSIWriter {
                 .sliceScale,
                 .bitmapFlag,
             ])
+            envelope = DWAREnvelope.encode(flags: 0, payload: [UInt8](body.sourceData))
+        case .pdf:
+            // Same shape as SVG (NNW oracle: PDF vector renditions carry
+            // flags 0x04, pixelFormat 'PDF ', the trimmed vector TVL, and a
+            // DWAR envelope with flags 0 — the raw PDF bytes, uncompressed
+            // unlike SVG's LZFSE payload).
+            layout = .vector
+            pixelFormat = CSIHeader.pixelFormatPDF
+            renditionFlags = 0x04
+            tvl = CSITVL.encode([.sliceScale, .bitmapFlag])
             envelope = DWAREnvelope.encode(flags: 0, payload: [UInt8](body.sourceData))
         }
         let header = CSIHeader.encode(

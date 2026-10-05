@@ -17,7 +17,10 @@ import AssetKit
 // to `rsvg-convert` (install with `apt install librsvg2-tools`,
 // `dnf install librsvg2-tools`, or `brew install librsvg`). Replace it
 // with your own `SVGRasterizer` if you'd rather not depend on a system
-// binary.
+// binary. `pdfRasterizer` works the same way: the default
+// `PdftoCairoRasterizer()` shells out to poppler's `pdfinfo` and
+// `pdftocairo` (Arch `poppler`, Debian/Ubuntu `poppler-utils`,
+// macOS `brew install poppler`).
 let compiler = XCAssetCompiler(deploymentTarget: "16.0")
 let result = try await compiler.compile(catalog: catalogURL)
 
@@ -36,12 +39,12 @@ if let bundle = result.appIconBundle {
   - PNG sources (1x/2x/3x scales, sRGB and display-P3, dark/light appearances)
   - SVG sources, each emitted as one preserved vector rendition (XML kept verbatim, LZFSE-compressed inside a DWAR envelope) plus three rasterised bitmap fallbacks at 1x/2x/3x (because `UIImage(named:)` reads the rasterised fallbacks; the vector rendition is what other CoreUI consumers and future iOS versions may prefer). Rasterisation is delegated to an injectable `SVGRasterizer`; the default shells out to `rsvg-convert`.
   - JPG sources stored as preserved raw renditions (JPEG bytes passed through; original compression preserved)
+  - PDF sources, each emitted as one preserved vector rendition (PDF bytes kept raw inside a DWAR envelope, `'PDF '` pixelFormat) plus three rasterised bitmap fallbacks at `round(page points × scale)` — the Xcode 27.0 shapes verified against the NetNewsWire oracle. Neutral-content (DeviceGray) pages compile to gray gamma 22; `preserves-vector-representation` moves the vector rendition between the vector part (scale 1) and the generic-image part (scale 0); `template-rendering-intent` lands in the bitmap renditionFlags. Rasterisation is delegated to an injectable `PDFRasterizer`; the default (`PdftoCairoRasterizer`) shells out to poppler's `pdfinfo` and `pdftocairo` (Arch: `pacman -S poppler`, Debian/Ubuntu: `apt install poppler-utils`, macOS: `brew install poppler`).
 - `.colorset` (sRGB and display-P3, hex or float components, dark/light appearances)
-- `.appiconset` (per-idiom and per-size, with the loose-PNG fallback that SpringBoard expects alongside `Assets.car`). PNG sources only; SVG/JPG are rejected because SpringBoard's icon-render pipeline requires PNG.
+- `.appiconset` (per-idiom and per-size, with the loose-PNG fallback that SpringBoard expects alongside `Assets.car`). PNG sources only; SVG/JPG/PDF are rejected because SpringBoard's icon-render pipeline requires PNG.
 
 ## What it deliberately doesn't support
 
-- `.pdf` vector sources (the CoreUI 970 DWAR envelope path is SVG-flavoured; adding PDF would need a separate `pixelFormat`)
 - Multi-rendition fanout — actool emits multiple compression variants per asset (`deepmap-lzfse`, `deepmap2`, `palette-img`); this writer emits one rendition per `(idiom, scale, appearance)` tuple per source format. Sufficient for iOS 16+.
 - Data sets, sticker sets, AR reference objects
 - macOS / tvOS / watchOS asset variants beyond what the structural attribute IDs encode

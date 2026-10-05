@@ -15,6 +15,7 @@ public enum XCAssetCompilerError: Error, Sendable, Equatable {
     case unsupportedAppIconSource(asset: String, filename: String)
     case svgDimensionsMissing(asset: String, filename: String)
     case svgRasterizationFailed(asset: String, filename: String, underlying: String)
+    case pdfRasterizationFailed(asset: String, filename: String, underlying: String)
 }
 
 extension XCAssetCompilerError: CustomStringConvertible {
@@ -48,6 +49,8 @@ extension XCAssetCompilerError: CustomStringConvertible {
             return "SVG asset '\(asset)' file '\(filename)' has no usable width/height or viewBox; cannot determine intrinsic size"
         case .svgRasterizationFailed(let asset, let filename, let underlying):
             return "Failed to rasterise SVG asset '\(asset)' file '\(filename)': \(underlying)"
+        case .pdfRasterizationFailed(let asset, let filename, let underlying):
+            return "Failed to rasterise PDF asset '\(asset)' file '\(filename)': \(underlying)"
         }
     }
 }

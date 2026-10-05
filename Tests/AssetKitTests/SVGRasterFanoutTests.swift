@@ -93,7 +93,8 @@ struct SVGRasterFanoutTests {
         for imageSet in loaded.imageSets {
             renditions.append(contentsOf: try ImageRenderer.renditions(
                 for: imageSet,
-                svgRasterizer: svgRasterizer
+                svgRasterizer: svgRasterizer,
+                pdfRasterizer: StubPDFRasterizer()
             ))
         }
         return renditions

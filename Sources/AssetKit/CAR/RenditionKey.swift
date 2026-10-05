@@ -91,6 +91,15 @@ struct RenditionKey: Hashable, Sendable {
                 // part; bitmap variants rasterised from the SVG (when the
                 // compiler emits them) would use Part.image instead.
                 self.part = Part.vectorSource.rawValue
+            case .pdf(let preservesVector):
+                // Preserving imagesets pack the PDF into the vector-source
+                // part at scale 1, like SVG. Non-preserving ones keep the
+                // PDF in the generic-image part at scale 0 — assetutil
+                // surfaces those as Vector rows without a Scale (NNW
+                // oracle: accountNewsBlur vs accountBazQux).
+                self.part = preservesVector
+                    ? Part.vectorSource.rawValue
+                    : Part.image.rawValue
             case .jpeg:
                 // JPEG sits in the generic-image lookup category — CoreUI
                 // decodes the JPG body itself at runtime and returns the

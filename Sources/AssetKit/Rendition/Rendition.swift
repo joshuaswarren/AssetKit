@@ -100,6 +100,24 @@ struct BitmapBody: Sendable {
     /// classification (e.g. when re-rasterising via the preserved vector
     /// source at a non-intrinsic size). PNG / appicon bitmaps leave it false.
     var derivedFromVector: Bool = false
+    /// Whether the source's vector data is also preserved in the car
+    /// (imageset `preserves-vector-representation`). With
+    /// `derivedFromVector` this selects the CSI renditionFlags 0x100 bit:
+    /// PDF bitmaps of a preserving imageset carry 0x104, a non-preserving
+    /// one plain 0x4 (NNW oracle). SVG sources always preserve.
+    var preservesVectorRepresentation: Bool = true
+    /// The imageset's `template-rendering-intent`. Encoded into the CSI
+    /// renditionFlags low bits of vector-rasterised bitmaps (template 0x8,
+    /// automatic/unspecified 0x10, original none — NNW oracle: disclosure
+    /// 0xc, faviconTemplateImage 0x14, original-intent sets 0x4/0x104).
+    enum RenderingIntent: Sendable {
+        case unspecified
+        case template
+        case automatic
+        case original
+    }
+
+    var renderingIntent: RenderingIntent = .unspecified
     /// The source filename (e.g. "icon@2x.png"). Stored in the CSI header's
     /// 128-char name field; actool uses the filename here, not the asset name.
     var renditionName: String
@@ -141,6 +159,12 @@ struct PreservedSourceBody: Sendable {
     enum Format: Sendable {
         case svg
         case jpeg(width: UInt32, height: UInt32)
+        /// PDF source. `preservesVector` mirrors the imageset's
+        /// `preserves-vector-representation`: it selects the rendition key
+        /// slot — the dedicated vector part at scale 1 when preserved, the
+        /// generic-image part at scale 0 when not (NNW oracle: assetutil
+        /// Vector rows without Scale for the latter).
+        case pdf(preservesVector: Bool)
     }
 
     var format: Format

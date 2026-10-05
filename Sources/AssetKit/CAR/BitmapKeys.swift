@@ -31,8 +31,16 @@ enum BitmapKeys {
             case appIcon
             /// PNG and JPEG `.imageset` assets — bitmap source.
             case image
-            /// SVG `.imageset` assets — vector source.
+            /// SVG `.imageset` assets and `preserves-vector-representation`
+            /// PDF sets — vector source preserved in the car.
             case vector
+            /// PDF `.imageset` assets without
+            /// `preserves-vector-representation`: the vector bytes still
+            /// ship (as the scale-0 generic-image rendition) but the asset
+            /// classifies as raster-derived. Apple's BITMAPKEYS marker for
+            /// these is 0x0f (NNW oracle: accountNewsBlur), distinct from
+            /// the 0x0e vector and 0x04 bitmap markers.
+            case vectorDiscarded
             /// `.colorset` assets. actool 27.0 writes one BITMAPKEYS row per
             /// colorset too (marker 0x02, variable section shaped like the
             /// image one).
@@ -46,12 +54,14 @@ enum BitmapKeys {
 
         /// Slot 6 of the header (the only header u32 that varies by kind).
         /// `0x04` for bitmap-source assets (PNG, JPG); `0x0e` for classic
-        /// appicons and vector sources; `0x02` for single-size appicons and
-        /// colors (actool 27.0 oracles).
+        /// appicons and vector sources; `0x0f` for non-preserving PDF
+        /// sets; `0x02` for single-size appicons and colors (actool 27.0
+        /// oracles).
         private var assetKindMarker: UInt32 {
             switch kind {
             case .image: return 0x04
             case .vector, .appIcon: return 0x0e
+            case .vectorDiscarded: return 0x0f
             case .appIconSingleSize, .color: return 0x02
             }
         }
@@ -86,7 +96,7 @@ enum BitmapKeys {
                 w.writeLE(UInt16(1))
                 w.writeLE(UInt16(1))
                 w.writeLE(UInt32(7))
-            case .image, .vector:
+            case .image, .vector, .vectorDiscarded:
                 w.writeLE(UInt16(1))
                 w.writeLE(UInt16(0))
                 w.writeLE(UInt32(1))
@@ -166,8 +176,10 @@ enum BitmapKeys {
     /// AppIcon takes precedence over Vector takes precedence over Image:
     /// an .appiconset is a distinct CoreUI category, and a vector source
     /// outranks plain bitmap because the rasterised PNG fallbacks coexist
-    /// with the preserved SVG body. Mixed PNG/JPEG imagesets fall through
+    /// with the preserved body. Mixed PNG/JPEG imagesets fall through
     /// to `.image`. Color-only assets (`.colorset`) classify as `.color`.
+    /// A PDF set without `preserves-vector-representation` classifies as
+    /// `.vectorDiscarded` (marker 0x0f); with it, `.vector` (0x0e).
     ///
     /// The AppIcon arm relies on `ImageRenderer.appIconRenditions` only
     /// producing `.bitmap(.appIcon)` renditions (PNG-only at that entry
@@ -180,8 +192,13 @@ enum BitmapKeys {
             }
         }
         for rendition in renditions {
-            if case .preservedSource(let body) = rendition.body, case .svg = body.format {
-                return .vector
+            if case .preservedSource(let body) = rendition.body {
+                switch body.format {
+                case .svg: return .vector
+                case .pdf(let preservesVector):
+                    return preservesVector ? .vector : .vectorDiscarded
+                case .jpeg: break
+                }
             }
         }
         for rendition in renditions {

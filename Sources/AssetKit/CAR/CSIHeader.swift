@@ -27,6 +27,12 @@ enum CSIHeader {
     /// renderer on the DWAR-wrapped body.
     static let pixelFormatSVG: UInt32 = 0x53564720
 
+    /// `pixelFormat` = 'PDF ' (trailing space) as an LE multi-char constant.
+    /// Produces file bytes space,F,D,P. Used for preserved-source PDF
+    /// renditions; CoreUI dispatches on this constant to invoke its PDF
+    /// renderer on the DWAR-wrapped body (NNW oracle).
+    static let pixelFormatPDF: UInt32 = 0x50444620
+
     /// Layout types observed in the reference. The names are derived from
     /// CoreUI symbol names where known.
     enum Layout: UInt16 {

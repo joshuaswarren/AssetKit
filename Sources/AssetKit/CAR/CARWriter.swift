@@ -193,12 +193,12 @@ struct CARWriter: Sendable {
         case .color(let body):
             return CSIWriter.color(name: rendition.name, body: body)
         case .preservedSource(let body):
-            // SVG renditions are scale-free; the reference leaves
+            // SVG and PDF renditions are scale-free; the reference leaves
             // scaleFactor=0 for them. JPGs respect the @Nx suffix the same
             // way PNGs do.
             let scaleFactor: UInt32 = {
                 switch body.format {
-                case .svg: return 0
+                case .svg, .pdf: return 0
                 case .jpeg: return UInt32(rendition.scale?.factor ?? 1) * 100
                 }
             }()

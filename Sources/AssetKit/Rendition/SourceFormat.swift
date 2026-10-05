@@ -1,6 +1,6 @@
 import Foundation
 
-/// The encoding of a user-supplied file inside an asset: PNG, SVG, or JPG.
+/// The encoding of a user-supplied file inside an asset: PNG, SVG, JPG, or PDF.
 ///
 /// Distinct from **asset category** (an `(element, part)` pair CoreUI
 /// attaches to the rendition key) and from **rendition body kind** (how
@@ -16,12 +16,14 @@ enum SourceFormat {
     case png
     case svg
     case jpeg
+    case pdf
 
     static func detect(filename: String) -> SourceFormat? {
         switch (filename as NSString).pathExtension.lowercased() {
         case "png": return .png
         case "svg": return .svg
         case "jpg", "jpeg": return .jpeg
+        case "pdf": return .pdf
         default: return nil
         }
     }

@@ -101,6 +101,20 @@ struct CatalogContents: Codable, Sendable {
 }
 
 struct ImageSetContents: Codable, Sendable {
+    /// `properties` block: `preserves-vector-representation` and
+    /// `template-rendering-intent` drive how PDF sources are compiled.
+    struct Properties: Codable, Sendable {
+        var preservesVectorRepresentation: Bool?
+        /// "template", "original", or "automatic" (Xcode's UI default is
+        /// to omit the key, which behaves like "automatic").
+        var templateRenderingIntent: String?
+
+        enum CodingKeys: String, CodingKey {
+            case preservesVectorRepresentation = "preserves-vector-representation"
+            case templateRenderingIntent = "template-rendering-intent"
+        }
+    }
+
     struct Image: Codable, Sendable {
         var idiom: Idiom
         var scale: Scale?
@@ -114,6 +128,7 @@ struct ImageSetContents: Codable, Sendable {
         }
     }
     var images: [Image]
+    var properties: Properties?
     var info: CatalogContents.Info
 }
 
