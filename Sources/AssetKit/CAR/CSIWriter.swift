@@ -107,7 +107,13 @@ enum CSIWriter {
             // bitmap-count flag. Width, height, and bytes-per-row are not
             // meaningful for a scale-free vector source.
             tvl = CSITVL.encode([.sliceScale, .bitmapFlag])
-            envelope = DWAREnvelope.encode(flags: 1, payload: LZFSE.encode([UInt8](body.sourceData)))
+            // actool leaves the payload raw when LZFSE does not shrink it
+            // (Alt2 Path 2.svg). assetutil then reports no Compression.
+            let raw = [UInt8](body.sourceData)
+            let compressed = LZFSE.encode(raw)
+            envelope = compressed.count < raw.count
+                ? DWAREnvelope.encode(flags: 1, payload: compressed)
+                : DWAREnvelope.encode(flags: 0, payload: raw)
         case .jpeg(let width, let height):
             layout = .bitmapIcon
             pixelFormat = CSIHeader.pixelFormatJPEG
