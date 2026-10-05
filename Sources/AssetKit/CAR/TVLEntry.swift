@@ -35,9 +35,9 @@ enum TVLEntry {
     case bitmapFlag
 
     /// Type 1007 (4-byte value): bytes per row, aligned up to 16. Caller
-    /// passes the pixel width; encoding computes `width * 4` then rounds up
-    /// to a 16-byte stride.
-    case bytesPerRow(width: UInt32)
+    /// passes the pixel width and per-pixel byte count (4 for ARGB/GA16,
+    /// 2 for GA8).
+    case bytesPerRow(width: UInt32, bytesPerPixel: UInt32)
 
     func encode(into w: inout ByteWriter) {
         switch self {
@@ -73,10 +73,13 @@ enum TVLEntry {
             w.writeLE(UInt32(1006))
             w.writeLE(UInt32(4))
             w.writeLE(UInt32(1))
-        case .bytesPerRow(let width):
+        case .bytesPerRow(let width, let bytesPerPixel):
             w.writeLE(UInt32(1007))
             w.writeLE(UInt32(4))
-            let bytesPerRow = width * 4
+            // actool stores the exact stride (NNW oracle: 4096 for ARGB and
+            // GA16, 2048 for GA8 at 1024 px); ours keeps the historical
+            // 16-byte alignment, identical for these strides.
+            let bytesPerRow = width * bytesPerPixel
             let aligned = (bytesPerRow + 15) & ~15
             w.writeLE(aligned)
         }

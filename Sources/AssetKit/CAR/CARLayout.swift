@@ -39,8 +39,9 @@ struct CARLayout {
         }
 
         var usedAppearances: Set<UInt16> = [AppearanceKeys.any]
-        for rendition in renditions where rendition.appearance?.darkLuminosity == true {
-            usedAppearances.insert(AppearanceKeys.dark)
+        for rendition in renditions {
+            guard let token = rendition.appearance?.keyToken else { continue }
+            usedAppearances.insert(token)
         }
         self.usedAppearances = usedAppearances
     }

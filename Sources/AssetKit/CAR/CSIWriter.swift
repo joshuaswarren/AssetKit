@@ -9,14 +9,36 @@ import Foundation
 /// COLR block for color).
 enum CSIWriter {
     static func bitmap(name: String, body: BitmapBody, scaleFactor: UInt32) -> Data {
+        let fourCCBytes = Array(body.pixelFormat.fourCC.utf8)
+        // LE multi-char constant: the first string char lands in the HIGH
+        // byte, so the on-disk field reads the string reversed ("ARGB" is
+        // stored as 0x41524742, bytes 'B','G','R','A').
+        var pixelFormat: UInt32 = 0
+        for (index, byte) in fourCCBytes.prefix(4).enumerated() {
+            pixelFormat |= UInt32(byte) << (8 * (3 - index))
+        }
+        // Gray renditions carry actool's gray color-space ids regardless of
+        // the body's RGB space: GA8 is gray gamma 22 (2), GA16 is extended
+        // gray (6). Verified against the NNW oracle CSI headers.
+        let colorSpace: UInt32
+        switch body.pixelFormat {
+        case .bgra8: colorSpace = UInt32(body.colorSpaceID)
+        case .gray8: colorSpace = 2
+        case .gray16: colorSpace = 6
+        }
         let tvl = CSITVL.encode([
             .bitmapDescriptor(width: body.width, height: body.height),
             .destRect(width: body.width, height: body.height),
             .sliceScale,
             .bitmapFlag,
-            .bytesPerRow(width: body.width),
+            .bytesPerRow(width: body.width, bytesPerPixel: body.pixelFormat.bytesPerPixel),
         ])
-        let payload = MLECBody.encode(width: body.width, height: body.height, pixelsBGRA: body.pixelsBGRA)
+        let payload = MLECBody.encode(
+            width: body.width,
+            height: body.height,
+            bytesPerPixel: body.pixelFormat.bytesPerPixel,
+            pixels: body.pixelsBGRA
+        )
 
         // Bit 4 (0x10): generic-image category; set for `.image`, cleared
         // for `.appIcon`. Matches what UIImage(named:) walks for imageset
@@ -40,8 +62,8 @@ enum CSIWriter {
             width: body.width,
             height: body.height,
             scaleFactor: scaleFactor,
-            pixelFormat: CSIHeader.pixelFormatARGB,
-            colorSpace: UInt32(body.colorSpaceID),
+            pixelFormat: pixelFormat,
+            colorSpace: colorSpace,
             layout: .bitmapIcon,
             name: body.renditionName,
             tvlLength: UInt32(tvl.count),

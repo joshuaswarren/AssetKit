@@ -59,6 +59,40 @@ struct BitmapBody: Sendable {
     var pixelsBGRA: [UInt8]
     var colorSpaceID: UInt8
     var kind: Kind
+    /// Pixel encoding of the CSI record and its MLEC payload. Tinted icon
+    /// variants are stored as gray+alpha: actool writes one 8-bit
+    /// gray-gamma-22 rendition and one 16-bit extended-gray (P3) rendition
+    /// per idiom (NNW oracle CSI: pixfmt 'GA8 ' cs=2, 'GA16' cs=6).
+    enum PixelFormat: Sendable {
+        /// 'ARGB', colorSpaceID as carried (sRGB = 1), 4 bytes/pixel.
+        case bgra8
+        /// 'GA8 ', colorSpace 2 (gray gamma 22), 2 bytes/pixel (gray, alpha).
+        /// `pixelsBGRA` holds the already-converted interleaved gray+alpha
+        /// bytes when this format is selected.
+        case gray8
+        /// 'GA16', colorSpace 6 (extended gray), 4 bytes/pixel (gray half,
+        /// alpha half). `pixelsBGRA` holds the interleaved little-endian
+        /// half-float pairs when this format is selected.
+        case gray16
+
+        var fourCC: String {
+            switch self {
+            case .bgra8: return "ARGB"
+            case .gray8: return "GA8 "
+            case .gray16: return "GA16"
+            }
+        }
+
+        var bytesPerPixel: UInt32 {
+            switch self {
+            case .bgra8: return 4
+            case .gray8: return 2
+            case .gray16: return 4
+            }
+        }
+    }
+
+    var pixelFormat: PixelFormat = .bgra8
     /// True iff this bitmap was rasterised from a vector source (SVG, PDF)
     /// rather than supplied directly as bitmap pixels. The reference actool
     /// output tags vector-rasterised bitmaps with extra bits in the CSI

@@ -12,6 +12,10 @@ struct IconFile: Sendable, Hashable {
     var scale: Int
     var sourceURL: URL
     var outputName: String
+    /// Appearance variant this entry carries (dark / tinted). Nil for the
+    /// default variant. Appearance variants never contribute to
+    /// CFBundleIconFiles; they only widen the car's rendition set.
+    var appearance: Appearance? = nil
 }
 
 enum AppIconPlistEmitter {
@@ -37,9 +41,11 @@ enum AppIconPlistEmitter {
                 pointSize: w,
                 scale: scale,
                 sourceURL: src,
-                outputName: bundleName
+                outputName: bundleName,
+                appearance: image.appearances?.first
             )
             allFiles.append(entry)
+            guard image.appearances == nil else { continue }
             switch image.idiom {
             case .iphone:
                 if !iphoneFiles.contains(bundleName) { iphoneFiles.append(bundleName) }

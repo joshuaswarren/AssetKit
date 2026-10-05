@@ -74,7 +74,22 @@ struct Appearance: Codable, Sendable, Hashable {
         appearance == "luminosity" && value == "dark"
     }
 
+    var tintedLuminosity: Bool {
+        appearance == "luminosity" && value == "tinted"
+    }
+
+    /// The id rendition keys carry in their `appearance` attribute, and the
+    /// row this variant needs in APPEARANCEKEYS. Verified against the NNW
+    /// single-size oracle car: dark icons key at 1 (UIAppearanceDark),
+    /// tinted icons at 10 (ISAppearanceTintable).
+    var keyToken: UInt16? {
+        if darkLuminosity { return AppearanceKeys.dark }
+        if tintedLuminosity { return AppearanceKeys.tintable }
+        return nil
+    }
+
     static let dark = Appearance(appearance: "luminosity", value: "dark")
+    static let tinted = Appearance(appearance: "luminosity", value: "tinted")
 }
 
 struct CatalogContents: Codable, Sendable {
@@ -110,6 +125,7 @@ struct AppIconContents: Codable, Sendable {
         var filename: String?
         var role: String?
         var subtype: String?
+        var appearances: [Appearance]?
 
         var pointSize: (Double, Double)? {
             let parts = size.split(separator: "x")

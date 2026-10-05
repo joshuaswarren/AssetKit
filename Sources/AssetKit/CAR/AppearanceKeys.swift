@@ -18,6 +18,10 @@ import Foundation
 enum AppearanceKeys {
     static let any: UInt16 = 0
     static let dark: UInt16 = 1
+    /// Tinted home-screen icon variants. Name and id verified against the
+    /// NNW single-size oracle car's APPEARANCEKEYS tree
+    /// ("ISAppearanceTintable" -> 0x000A).
+    static let tintable: UInt16 = 10
 
     static func entries(used: Set<UInt16>) -> [BOMTree.Entry] {
         var rows: [BOMTree.Entry] = []
@@ -33,6 +37,12 @@ enum AppearanceKeys {
             rows.append(BOMTree.Entry(
                 key: Data("UIAppearanceDark".utf8),
                 value: Self.encodeID(dark)
+            ))
+        }
+        if used.contains(tintable) {
+            rows.append(BOMTree.Entry(
+                key: Data("ISAppearanceTintable".utf8),
+                value: Self.encodeID(tintable)
             ))
         }
         return rows

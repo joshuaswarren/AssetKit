@@ -32,14 +32,9 @@ struct CARWriter: Sendable {
 
         // KEYFORMAT is catalog-wide and actool only lists the attributes in
         // use: the base eight, plus dimension2 when some rendition carries
-        // an Icon Index (app icons).
-        let usesIconIndex = renditions.contains { rendition in
-            if case .bitmap(let body) = rendition.body, body.kind == .appIcon {
-                return true
-            }
-            return false
-        }
-        let keyFormat = usesIconIndex ? v1KeyFormat : baseKeyFormat
+        // an Icon Index (app icons), plus appearance / displayGamut when
+        // dark or tinted icon variants widen the tuple.
+        let keyFormat = KeyFormat.format(for: renditions)
 
         // ---- Tree contents ----
         let renditionData: [(key: Data, value: Data)] = renditions.map { rendition in
@@ -94,22 +89,30 @@ struct CARWriter: Sendable {
         bom.addBlock(BOMTree.header(
             leafBlockID: facetTree.value, blockSize: BOMTree.defaultBlockSize,
             pathCount: facetData.count, isInternal: false,
-            keyTrailerLength: facetData.first?.key.count ?? 0))
+            // -1 (0xFFFFFFFF) marks "variable-length keys, external
+            // blocks" — Apple's FACETKEYS/APPEARANCEKEYS headers carry -1,
+            // RENDITIONS the exact fixed key length.
+            keyTrailerLength: -1))
         bom.addBlock(BOMTree.leafExternal(
             sorted: facetData,
             keyBlockIDs: facetDataIDs.map { $0.key },
             valueBlockIDs: facetDataIDs.map { $0.value },
-            blockSize: BOMTree.defaultBlockSize))
+            blockSize: BOMTree.defaultBlockSize,
+            // Variable-length string keys stay in external blocks only;
+            // Apple's FACETKEYS leaf carries no inline key area.
+            inlineKeys: false))
 
         bom.addBlock(BOMTree.header(
             leafBlockID: appearanceTree.value, blockSize: BOMTree.defaultBlockSize,
             pathCount: appearanceData.count, isInternal: false,
-            keyTrailerLength: appearanceData.first?.key.count ?? 0))
+            keyTrailerLength: -1))
         bom.addBlock(BOMTree.leafExternal(
             sorted: appearanceData,
             keyBlockIDs: appearanceDataIDs.map { $0.key },
             valueBlockIDs: appearanceDataIDs.map { $0.value },
-            blockSize: BOMTree.defaultBlockSize))
+            blockSize: BOMTree.defaultBlockSize,
+            // Same as FACETKEYS: external key blocks only.
+            inlineKeys: false))
 
         for (entry, _) in zip(appearanceData, appearanceDataIDs) {
             bom.addBlock(entry.key)

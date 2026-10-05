@@ -136,8 +136,17 @@ enum BitmapKeys {
         let kind = inferKind(from: renditions)
         var countOverride: UInt32? = nil
         var effectiveKind = kind
-        if kind == .appIcon, renditions.count == 2,
-           renditions.contains(where: { if case .multiSized = $0.body { return true }; return false }) {
+        // Single-size form: every bitmap rendition occupies the same Icon
+        // Index slot (one point size, optionally with dark / tinted
+        // appearance variants and per-idiom keys), plus the MultiSized
+        // containers. The classic multi-size form spans several indices.
+        let bitmapIndices = Set(renditions.compactMap { rendition -> UInt16? in
+            guard case .bitmap = rendition.body else { return nil }
+            return rendition.iconIndex
+        })
+        if kind == .appIcon,
+           renditions.contains(where: { if case .multiSized = $0.body { return true }; return false }),
+           bitmapIndices.count <= 1 {
             effectiveKind = .appIconSingleSize
             countOverride = UInt32(renditions.count)
         }

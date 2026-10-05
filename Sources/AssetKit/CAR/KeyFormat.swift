@@ -10,11 +10,16 @@ enum AttributeID: UInt32 {
     case part = 2
     case appearance = 7
     case dimension2 = 9
+    case dimension1 = 8
     case scale = 12
     case localization = 13
     case idiom = 15
     case subtype = 16
     case identifier = 17
+    case deploymentTarget = 25
+    case displayGamut = 24
+    case glyphWeight = 26
+    case glyphSize = 27
 }
 
 /// Attribute order CoreUI emits in `KEYFORMAT` (and which the rendition key
@@ -50,6 +55,58 @@ let v1KeyFormat: [AttributeID] = [
     .element,
     .part,
 ]
+
+/// Attribute order actool widens the key tuple in: the classic order with
+/// each optional attribute inserted at its fixed rank. Dumped from the NNW
+/// single-size-with-appearances oracle car, whose 14-attribute KEYFORMAT is
+/// [7, 13, 12, 15, 16, 26, 27, 9, 8, 25, 24, 17, 1, 2].
+let canonicalKeyOrder: [AttributeID] = [
+    .appearance,
+    .localization,
+    .scale,
+    .idiom,
+    .subtype,
+    .glyphWeight,
+    .glyphSize,
+    .dimension2,
+    .dimension1,
+    .deploymentTarget,
+    .displayGamut,
+    .identifier,
+    .element,
+    .part,
+]
+
+enum KeyFormat {
+    /// The catalog's KEYFORMAT: the attributes this catalog's renditions
+    /// actually use, in `canonicalKeyOrder`. actool includes `dimension2`
+    /// when app icons are present, `displayGamut` when a rendition carries a
+    /// non-default gamut (tinted icons re-key their 16-bit gray variant as
+    /// P3), and `appearance` when any rendition has a named appearance.
+    /// Verified: the NNW oracle car keys its dark/tinted renditions through
+    /// exactly these slots.
+    static func format(for renditions: [Rendition]) -> [AttributeID] {
+        let usesIconIndex = renditions.contains { rendition in
+            if case .bitmap(let body) = rendition.body, body.kind == .appIcon {
+                return true
+            }
+            return false
+        }
+        let usesAppearance = renditions.contains { $0.appearance?.keyToken != nil }
+        let usesGamut = renditions.contains { rendition in
+            guard let gamut = rendition.gamut else { return false }
+            return gamut != .sRGB
+        }
+        var used: Set<AttributeID> = [
+            .appearance, .localization, .scale, .idiom, .subtype,
+            .identifier, .element, .part,
+        ]
+        if usesIconIndex { used.insert(.dimension2) }
+        if usesAppearance { used.insert(.appearance) }
+        if usesGamut { used.insert(.displayGamut) }
+        return canonicalKeyOrder.filter { used.contains($0) }
+    }
+}
 
 /// `kfmt` block payload.
 enum KeyFormatBlock {

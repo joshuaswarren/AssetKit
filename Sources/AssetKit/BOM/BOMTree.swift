@@ -41,22 +41,33 @@ enum BOMTree {
         w.writeBE(blockSize)
         w.writeBE(UInt32(pathCount))
         w.write(byte: isInternal ? 1 : 0)
-        w.writeBE(UInt32(isInternal ? 0 : keyTrailerLength))
+        // -1 marks external variable-length keys (Apple's FACETKEYS /
+        // APPEARANCEKEYS); bitPattern keeps that representable.
+        w.writeBE(UInt32(bitPattern: Int32(truncatingIfNeeded: keyTrailerLength)))
         w.writeZeros(4)
         precondition(w.offset == 29, "tree header must be 29 bytes; got \(w.offset)")
         return w.data
     }
 
     /// External-key leaf: the entry table, a zero key-offset region
-    /// (count x u32), and the concatenated key bytes — then the whole leaf
-    /// is zero-padded to `blockSize` and `keyAreaLength` more zero bytes are
-    /// appended (the key area is reserved twice in the file length, as
-    /// actool 27.0 does).
+    /// (count x u32), and — for fixed-length-key trees (RENDITIONS) — the
+    /// concatenated key bytes; the whole region is zero-padded to
+    /// `blockSize` and `keyAreaLength` more zero bytes are appended (the
+    /// key area is reserved twice in the file length, as actool 27.0 does
+    /// for RENDITIONS).
+    ///
+    /// Variable-length-key trees (FACETKEYS, APPEARANCEKEYS) store their
+    /// keys in external blocks ONLY: Apple's leaf for those trees is a bare
+    /// blockSize-zero region with no inline keys and no trailing key area.
+    /// Readers resolve names through the key blocks there; inlining
+    /// variable-length keys makes them read misaligned slices (assetutil
+    /// rendered "UIAppearanceDark" as "earanceDark" off the padded slots).
     static func leafExternal(
         sorted: [(key: Data, value: Data)],
         keyBlockIDs: [UInt32],
         valueBlockIDs: [UInt32],
-        blockSize: UInt32
+        blockSize: UInt32,
+        inlineKeys: Bool = true
     ) -> Data {
         precondition(sorted.count == keyBlockIDs.count && sorted.count == valueBlockIDs.count)
         var w = ByteWriter()
@@ -69,14 +80,18 @@ enum BOMTree {
             w.writeBE(keyBlockIDs[i])
         }
         w.writeZeros(4)
-        for entry in sorted {
-            w.write(entry.key)
-        }
         let keyAreaLength = sorted.reduce(0) { $0 + $1.key.count }
+        if inlineKeys {
+            for entry in sorted {
+                w.write(entry.key)
+            }
+        }
         if w.offset < Int(blockSize) {
             w.writeZeros(Int(blockSize) - w.offset)
         }
-        w.writeZeros(keyAreaLength)
+        if inlineKeys {
+            w.writeZeros(keyAreaLength)
+        }
         return w.data
     }
 

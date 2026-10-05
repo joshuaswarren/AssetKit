@@ -85,7 +85,7 @@ enum ImageRenderer {
                 assetName: appIcon.name,
                 idiom: file.idiom,
                 scale: scale,
-                appearance: nil,
+                appearance: file.appearance,
                 gamut: .sRGB,
                 filename: filename,
                 kind: .appIcon
@@ -106,7 +106,7 @@ enum ImageRenderer {
         // 1792 variant is emitted (second oracle run).
         let largePhonePointSize = 90.0
         let hasLargePhoneVariant = files.contains {
-            $0.idiom == .iphone && $0.pointSize == 60 && $0.scale == 3
+            $0.appearance == nil && $0.idiom == .iphone && $0.pointSize == 60 && $0.scale == 3
         }
         var sizes = Set(files.map(\.pointSize))
         if hasLargePhoneVariant { sizes.insert(largePhonePointSize) }
@@ -121,6 +121,25 @@ enum ImageRenderer {
         for (file, rendition) in decoded {
             var icon = rendition
             icon.iconIndex = iconIndexOfSize[file.pointSize]
+            if file.appearance?.darkLuminosity == true {
+                // Dark variant: identical ARGB pixels, key carries
+                // UIAppearanceDark (NNW oracle renditions 328/326).
+                out.append(icon)
+                continue
+            }
+            if file.appearance?.tintedLuminosity == true {
+                // Tinted variant: actool writes TWO renditions per idiom —
+                // 8-bit gray gamma 22 ('GA8 ', cs 2) and 16-bit extended
+                // gray ('GA16', cs 6, key display-gamut P3). No ARGB
+                // rendition exists for the tinted slot. The gray channel is
+                // the source's luma (verified: the NNW oracle's GA16 pixels
+                // equal src16/65535 as half floats; its tint source is
+                // neutral so luma coincides with every channel). actool
+                // dithers the 8-bit encoding; we round instead (the
+                // deviation is at most 1/255 on near-black pixels).
+                out.append(contentsOf: tintedRenditions(from: icon))
+                continue
+            }
             out.append(icon)
             addMultiSizedEntry(
                 &groups, idiom: file.idiom, subtype: 0,
@@ -161,6 +180,88 @@ enum ImageRenderer {
     private struct MultiSizedGroup: Hashable {
         var idiom: Idiom
         var subtype: UInt16
+    }
+
+    /// Builds the two tinted-icon renditions (8-bit and 16-bit gray) from a
+    /// decoded ARGB icon rendition. The gray channel is Rec. 709 luma of the
+    /// 8-bit source values; the alpha channel passes through.
+    private static func tintedRenditions(from base: Rendition) -> [Rendition] {
+        guard case .bitmap(var body) = base.body else { return [] }
+        let pixelCount = Int(body.width) * Int(body.height)
+        precondition(body.pixelsBGRA.count == pixelCount * 4)
+
+        var gray8 = [UInt8]()
+        gray8.reserveCapacity(pixelCount * 2)
+        var gray16 = [UInt8]()
+        gray16.reserveCapacity(pixelCount * 4)
+        for pixel in 0..<pixelCount {
+            let offset = pixel * 4
+            // pixelsBGRA layout: [b, g, r, a] per pixel.
+            let blue = Double(body.pixelsBGRA[offset])
+            let green = Double(body.pixelsBGRA[offset + 1])
+            let red = Double(body.pixelsBGRA[offset + 2])
+            let alpha = body.pixelsBGRA[offset + 3]
+            let luma = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+            let gray = UInt8(max(0, min(255, luma.rounded())))
+            gray8.append(gray)
+            gray8.append(alpha)
+            // 16-bit extended gray stores half floats (NNW oracle: alpha
+            // 0x3C00 = 1.0, gray = value/255 as half). Derived from the
+            // 8-bit luma: our decode pipeline is 8-bit, so the extra
+            // precision actool gets from 16-bit sources is not recoverable.
+            let halfGray = halfBits(Double(gray) / 255.0)
+            let halfAlpha = halfBits(Double(alpha) / 255.0)
+            gray16.append(UInt8(halfGray & 0xFF))
+            gray16.append(UInt8((halfGray >> 8) & 0xFF))
+            gray16.append(UInt8(halfAlpha & 0xFF))
+            gray16.append(UInt8((halfAlpha >> 8) & 0xFF))
+        }
+
+        body.pixelsBGRA = gray8
+        body.pixelFormat = .gray8
+        body.colorSpaceID = 2
+        let gray8Rendition = Rendition(
+            name: base.name,
+            idiom: base.idiom,
+            scale: base.scale,
+            appearance: base.appearance,
+            gamut: nil,
+            subtype: base.subtype,
+            iconIndex: base.iconIndex,
+            body: .bitmap(body)
+        )
+
+        var body16 = body
+        body16.pixelsBGRA = gray16
+        body16.pixelFormat = .gray16
+        body16.colorSpaceID = 6
+        let gray16Rendition = Rendition(
+            name: base.name,
+            idiom: base.idiom,
+            scale: base.scale,
+            appearance: base.appearance,
+            // Keyed display-P3 in the rendition key's gamut slot (NNW
+            // oracle: tint16 gamut token 1, tint8 token 0).
+            gamut: .displayP3,
+            subtype: base.subtype,
+            iconIndex: base.iconIndex,
+            body: .bitmap(body16)
+        )
+        return [gray8Rendition, gray16Rendition]
+    }
+
+    /// IEEE 754 half-precision bit pattern for a value in [0, 1]. Gray and
+    /// alpha come from 8-bit samples, so only 0 and normal-range values
+    /// occur, but the conversion is exact for every normal half anyway.
+    private static func halfBits(_ value: Double) -> UInt16 {
+        let bits = Float(max(0, min(1, value))).bitPattern
+        let sign = UInt16((bits >> 16) & 0x8000)
+        let biased = Int((bits >> 23) & 0xFF)
+        let mantissa = UInt16((bits >> 13) & 0x3FF)
+        if biased == 0xFF { return sign | 0x7C00 } // inf/NaN: clamp to inf
+        let exponent = biased - 127
+        if biased == 0 || exponent < -14 { return sign } // zero / underflow to zero
+        return sign | UInt16(exponent + 15) << 10 | mantissa
     }
 
     private static func addMultiSizedEntry(

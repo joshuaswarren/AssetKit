@@ -13,6 +13,7 @@ struct RenditionKey: Hashable, Sendable {
     var idiom: UInt16
     var subtype: UInt16
     var dimension2: UInt16
+    var displayGamut: UInt16
     var identifier: UInt16
     var element: UInt16
     var part: UInt16
@@ -46,11 +47,14 @@ struct RenditionKey: Hashable, Sendable {
     }
 
     init(rendition: Rendition) {
-        self.appearance = (rendition.appearance?.darkLuminosity == true) ? 1 : 0
+        self.appearance = rendition.appearance?.keyToken ?? 0
         self.localization = 0
         self.scale = rendition.scale?.rawValueByte ?? 0
         self.idiom = rendition.idiom.rawValueByte
         self.subtype = rendition.subtype ?? 0
+        // Tinted icons re-key their 16-bit gray variant as display-P3
+        // (NNW oracle: tint8 gamut token 0, tint16 gamut token 1).
+        self.displayGamut = (rendition.gamut == .displayP3) ? 1 : 0
         self.identifier = UInt16(FacetKeys.nameHash(rendition.name) & 0xFFFF)
         switch rendition.body {
         case .bitmap(let body):
@@ -103,6 +107,7 @@ struct RenditionKey: Hashable, Sendable {
         idiom: UInt16 = 0,
         subtype: UInt16 = 0,
         dimension2: UInt16 = 0,
+        displayGamut: UInt16 = 0,
         identifier: UInt16 = 0,
         element: UInt16 = 0,
         part: UInt16 = 0
@@ -113,6 +118,7 @@ struct RenditionKey: Hashable, Sendable {
         self.idiom = idiom
         self.subtype = subtype
         self.dimension2 = dimension2
+        self.displayGamut = displayGamut
         self.identifier = identifier
         self.element = element
         self.part = part
@@ -133,6 +139,11 @@ struct RenditionKey: Hashable, Sendable {
             case .idiom: w.writeLE(idiom)
             case .subtype: w.writeLE(subtype)
             case .dimension2: w.writeLE(dimension2)
+            case .dimension1: w.writeLE(UInt16(0))
+            case .deploymentTarget: w.writeLE(UInt16(0))
+            case .glyphWeight: w.writeLE(UInt16(0))
+            case .glyphSize: w.writeLE(UInt16(0))
+            case .displayGamut: w.writeLE(displayGamut)
             case .identifier: w.writeLE(identifier)
             case .element: w.writeLE(element)
             case .part: w.writeLE(part)

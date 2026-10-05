@@ -23,8 +23,13 @@ import Foundation
 /// single chunk covering the whole image. The 3-chunk split is mimicry
 /// rather than a correctness requirement: CoreUI accepts both layouts.
 enum MLECBody {
-    static func encode(width: UInt32, height: UInt32, pixelsBGRA: [UInt8]) -> Data {
-        let bytesPerRow = Int(width) * 4
+    static func encode(
+        width: UInt32,
+        height: UInt32,
+        bytesPerPixel: UInt32 = 4,
+        pixels: [UInt8]
+    ) -> Data {
+        let bytesPerRow = Int(width) * Int(bytesPerPixel)
         let canChunkInThree = height % 3 == 0
         let chunkCount: UInt32 = canChunkInThree ? 3 : 1
         let rowsPerChunk = height / chunkCount
@@ -33,14 +38,14 @@ enum MLECBody {
         for i in 0..<Int(chunkCount) {
             let start = i * Int(rowsPerChunk) * bytesPerRow
             let end = start + Int(rowsPerChunk) * bytesPerRow
-            let slice = Array(pixelsBGRA[start..<end])
+            let slice = Array(pixels[start..<end])
             chunks.append((rows: rowsPerChunk, payload: LZFSE.encode(slice)))
         }
 
         var w = ByteWriter()
         w.writeFourCC("MLEC")
         w.writeLE(UInt32(3))                    // compressionType = 3 (LZFSE)
-        w.writeLE(UInt32(4))                    // bytesPerPixel (BGRA8 = 4)
+        w.writeLE(bytesPerPixel)                // bytesPerPixel (BGRA8 = 4, GA8 = 2)
         w.writeLE(chunkCount)
 
         for chunk in chunks {
