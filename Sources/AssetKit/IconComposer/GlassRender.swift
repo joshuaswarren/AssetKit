@@ -442,7 +442,11 @@ enum GlassRender {
         let borderAlpha: Float = dark ? 0.15 : 0.12
         let borderColor: Float = dark ? 1 : 0
         for i in 0..<count {
-            for spec in [rim.specA[i], rim.specB[i]] where spec > 0 {
+            // Baked dark PNG is darker than this source-over (lab_base top excess
+            // ratio 0.75, bottom 0.84). Light matches at 1. One dark scale, not a table.
+            let specScale: Float = dark ? 0.80 : 1
+            for spec0 in [rim.specA[i], rim.specB[i]] where spec0 > 0 {
+                let spec = spec0 * specScale
                 let k = 1 - spec, src = 1.09961 * spec
                 canvas.r[i] = src + canvas.r[i] * k
                 canvas.g[i] = src + canvas.g[i] * k
