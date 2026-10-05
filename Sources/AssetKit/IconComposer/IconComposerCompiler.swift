@@ -8,11 +8,9 @@ import PNG
 /// the per-appearance pre-rendered 1024 px icon bitmaps, and the MultiSized
 /// containers (IceCubesApp `AppIcon.icon` oracle).
 ///
-/// The pre-rendered bitmaps reproduce Apple's composition (background fill,
-/// layers at scale/translation, per-appearance fills, blend modes, and the
-/// tinted appearance as grayscale content over black). Apple's Liquid Glass
-/// lighting is not reproduced; the pixel delta is measured by the
-/// verification harness and reported by the caller.
+/// The pre-rendered bitmaps follow IconRendering's RenderBox display list (GlassRender): the
+/// background fill, per-group shadows, blur material, translucency, glass glow and highlights,
+/// the chiclet rim, and the tinted appearance as monochrome content over black.
 public enum IconComposerCompiler {
     public struct Input: Sendable {
         /// Icon name without the .icon extension (the --app-icon value).
@@ -66,6 +64,8 @@ public enum IconComposerCompiler {
         var blurStrength: Double
         var shadowStyle: UInt32
         var shadowOpacity: Double
+        /// "layer-color" (colored shadow) or "neutral".
+        var shadowKind: String?
         var translucency: [[String: Any]] // translucency-specializations
     }
 
@@ -105,6 +105,7 @@ public enum IconComposerCompiler {
                 blurStrength: blur ?? 0,
                 shadowStyle: shadow == nil ? 0 : 2,  // kind layer-color -> style 2 (oracle)
                 shadowOpacity: shadow?["opacity"] as? Double ?? 0,
+                shadowKind: shadow?["kind"] as? String,
                 translucency: group["translucency-specializations"] as? [[String: Any]] ?? []))
         }
         return IconModel(fills: json["fill-specializations"] as? [[String: Any]] ?? [], groups: groups)
@@ -200,22 +201,9 @@ public enum IconComposerCompiler {
 
     // MARK: - Rendering
 
-    /// Straight-alpha pixel with source-over compositing and the blend modes
-    /// Icon Composer layers use.
+    /// Straight-alpha 8-bit pixel of a decoded layer image.
     struct Pixel {
         var r: UInt8 = 0, g: UInt8 = 0, b: UInt8 = 0, a: UInt8 = 0
-
-        mutating func blend(source s: (UInt8, UInt8, UInt8), sourceAlpha sa: UInt8, lighten: Bool) {
-            let src: (UInt8, UInt8, UInt8) = lighten
-                ? (max(r, s.0), max(g, s.1), max(b, s.2))
-                : s
-            let inv = 255 - Int(sa)
-            func over(_ d: UInt8, _ v: UInt8) -> UInt8 {
-                UInt8((Int(v) * Int(sa) + Int(d) * inv + 127) / 255)
-            }
-            r = over(r, src.0); g = over(g, src.1); b = over(b, src.2)
-            a = UInt8(min(255, Int(sa) + Int(a) * inv / 255))
-        }
     }
 
     static let canvasSide = 1024
@@ -241,191 +229,10 @@ public enum IconComposerCompiler {
         return LoadedImage(width: image.size.x, pixels: rgba.map { Pixel(r: $0.r, g: $0.g, b: $0.b, a: $0.a) })
     }
 
-    /// Paints a vertical gradient (top -> bottom) over the whole canvas.
-    static func paintBackground(_ fill: Fill, into canvas: inout [Pixel]) {
-        for y in 0..<canvasSide {
-            let color = sample(fill, t: Double(y) / Double(canvasSide - 1))
-            for x in 0..<canvasSide {
-                paint(color: color, lighten: false, into: &canvas[y * canvasSide + x])
-            }
-        }
-    }
-
-    static func sample(_ fill: Fill, t: Double) -> IconColor {
-        switch fill {
-        case .solid(let c):
-            return c
-        case .gradient(let top, let bottom):
-            return IconColor(
-                colorSpaceID: top.colorSpaceID,
-                components: zip(top.components, bottom.components).map { $0 + ($1 - $0) * t })
-        }
-    }
-
-    static func paint(color: IconColor, alpha: Double = 1, lighten: Bool, into pixel: inout Pixel) {
-        var c = color.components
-        if c.count < 4 { c = [c[0], c[0], c[0], c.count > 1 ? c[1] : 1] }
-        // Fills in gray/p3 spaces paint through the sRGB canvas; Apple's
-        // pre-renders are sRGB bitmaps, so quantize components to 8 bits.
-        func q(_ v: Double) -> UInt8 { UInt8((min(max(v, 0), 1) * 255).rounded()) }
-        let sa = UInt8((min(max(c[3] * alpha, 0), 1) * 255).rounded())
-        pixel.blend(source: (q(c[0]), q(c[1]), q(c[2])), sourceAlpha: sa, lighten: lighten)
-    }
-
-    /// Liquid Glass wash, measured from actool 27.0 controlled variants
-    /// (glass-lab/wash-profiles.json): inside the layer's glass region (the
-    /// content box inset by 10% per side) the baked pre-render mixes each
-    /// pixel toward white with a weight W(s) — a top-rim glow, a body
-    /// gradient rising toward the bottom, and a bottom-edge glow. W depends
-    /// on the group's translucency and the appearance. Specular and
-    /// blur-material do not affect the pre-render (verified: 0.000 mean).
-    static func washValue(_ tables: [[Double]], _ translucency: Float, _ s: Double) -> Double {
-        guard s >= 0, s <= 1 else { return 0 }
-        let tr = Double(max(0, min(1, translucency)))
-        func at(_ table: [Double]) -> Double {
-            let x = s * 110
-            let i = min(109, Int(x))
-            let f = x - Double(i)
-            return table[i] + (table[i + 1] - table[i]) * f
-        }
-        if tr >= 1 { return at(tables[3]) }
-        if tr > 0.25 {
-            // piecewise-linear between the measured 0.25/0.5/0.75/1.0 tables
-            let lower = Int((tr - 0.25) / 0.25) // 0, 1, 2
-            let f = (tr - (0.25 + Double(lower) * 0.25)) / 0.25
-            let a = at(tables[lower]), b = at(tables[lower + 1])
-            return a + (b - a) * f
-        }
-        // glass-only material curve blended toward the 0.25 table
-        let f = tr / 0.25
-        let a = at(tables[4]), b = at(tables[0])
-        return a + (b - a) * f
-    }
-
-    static func washTables(_ appearance: Appearance?) -> [[Double]] {
-        appearance == .dark ? [GlassWash.dark[0], GlassWash.dark[1], GlassWash.dark[2], GlassWash.dark[3], GlassWash.g0Dark]
-            : (appearance == .tinted ? [GlassWash.tinted[0], GlassWash.tinted[1], GlassWash.tinted[2], GlassWash.tinted[3], GlassWash.g0Tinted]
-            : [GlassWash.light[0], GlassWash.light[1], GlassWash.light[2], GlassWash.light[3], GlassWash.g0Light])
-    }
-
-    /// Draws one layer image at its scale/translation with an optional fill
-    /// masked by the image alpha, blended per the layer's blend mode.
-    /// `wash` (level-indexed tables + group translucency) applies the Liquid
-    /// Glass white-mix inside the glass region (content box inset 10%/side).
-    static func drawLayer(
-        _ image: LoadedImage, fill: Fill?, scale: Double,
-        translation: (Double, Double), lighten: Bool,
-        wash: (tables: [[Double]], translucency: Float)? = nil,
-        weights: UnsafeMutablePointer<Float>? = nil, into canvas: inout [Pixel]
-    ) {
-        let side = max(1, Int((Double(canvasSide) * scale).rounded()))
-        let x0 = (canvasSide - side) / 2 + Int(translation.0.rounded())
-        let y0 = (canvasSide - side) / 2 + Int(translation.1.rounded())
-        let regionTop = Double(y0) + Double(side) / 10
-        let regionHeight = Double(side) * 0.8
-        for y in 0..<side {
-            let canvasY = y0 + y
-            guard canvasY >= 0, canvasY < canvasSide else { continue }
-            let sy = (Double(y) + 0.5) * Double(image.width) / Double(side) - 0.5
-            let sy0 = max(0, min(image.width - 1, Int(sy.rounded(.down))))
-            let sy1 = max(0, min(image.width - 1, sy0 + 1))
-            let fy = max(0, min(1, sy - Double(sy0)))
-            let s = (Double(canvasY) + 0.5 - regionTop) / regionHeight
-            let w = wash.map { washValue($0.tables, $0.translucency, s) } ?? 0
-            for x in 0..<side {
-                let canvasX = x0 + x
-                guard canvasX >= 0, canvasX < canvasSide else { continue }
-                let sx = (Double(x) + 0.5) * Double(image.width) / Double(side) - 0.5
-                let sx0 = max(0, min(image.width - 1, Int(sx.rounded(.down))))
-                let sx1 = max(0, min(image.width - 1, sx0 + 1))
-                let fx = max(0, min(1, sx - Double(sx0)))
-                let p = bilinear(image, sx0, sy0, sx1, sy1, fx, fy)
-                if p.a == 0 { continue }
-                var out = canvas[canvasY * canvasSide + canvasX]
-                if let fill {
-                    let t = side > 1 ? Double(y) / Double(side - 1) : 0
-                    paint(color: sample(fill, t: t), alpha: Double(p.a) / 255, lighten: lighten, into: &out)
-                } else {
-                    out.blend(source: (p.r, p.g, p.b), sourceAlpha: p.a, lighten: lighten)
-                }
-                if w != 0 {
-                    let cov = Double(p.a) / 255
-                    if let weights {
-                        let idx = canvasY * canvasSide + canvasX
-                        weights[idx] = max(weights[idx], Float(w * cov))
-                    } else {
-                        func mixWash(_ v: UInt8) -> UInt8 {
-                            UInt8((Double(v) + w * (255 - Double(v)) * cov).rounded())
-                        }
-                        out = Pixel(r: mixWash(out.r), g: mixWash(out.g), b: mixWash(out.b), a: out.a)
-                    }
-                }
-                canvas[canvasY * canvasSide + canvasX] = out
-            }
-        }
-    }
-
-    static func bilinear(
-        _ image: LoadedImage, _ x0: Int, _ y0: Int, _ x1: Int, _ y1: Int,
-        _ fx: Double, _ fy: Double
-    ) -> Pixel {
-        func lerp(_ a: Pixel, _ b: Pixel, _ t: Double) -> Pixel {
-            func mix(_ u: UInt8, _ v: UInt8) -> UInt8 {
-                UInt8((Double(u) + (Double(v) - Double(u)) * t).rounded())
-            }
-            return Pixel(r: mix(a.r, b.r), g: mix(a.g, b.g), b: mix(a.b, b.b), a: mix(a.a, b.a))
-        }
-        let top = lerp(image.pixels[y0 * image.width + x0], image.pixels[y0 * image.width + x1], fx)
-        let bottom = lerp(image.pixels[y1 * image.width + x0], image.pixels[y1 * image.width + x1], fx)
-        return lerp(top, bottom, fy)
-    }
-
-    /// Renders the 1024 px pre-render for one appearance as opaque BGRA.
-    /// Light and dark paint the background fill then every group in json
-    /// order; the tinted appearance paints content only (no background) and
-    /// reduces it to grayscale luminance over black, matching Apple's
-    /// tinted rendition.
+    /// Renders the 1024 px pre-render for one appearance as opaque BGRA, following
+    /// IconRendering's display list (GlassRender).
     static func render(model: IconModel, images: [String: LoadedImage], appearance: Appearance?) -> [UInt8] {
-        var canvas = [Pixel](repeating: Pixel(), count: canvasSide * canvasSide)
-        let background = resolveFill(model.fills, appearance: appearance)
-        let tinted = appearance == .tinted
-        if let background, !tinted {
-            paintBackground(background, into: &canvas)
-        }
-        // Tinted applies the glass wash after the grayscale reduction (the
-        // measured tables are effects on the final tinted bitmap).
-        var washWeights: [Float] = []
-        if tinted { washWeights = [Float](repeating: 0, count: canvasSide * canvasSide) }
-        let tables = washTables(appearance)
-        for group in model.groups {
-            let tr = resolveTranslucency(group.translucency, appearance: appearance)
-            for layer in group.layers {
-                guard let image = images[layer.imageName] else { continue }
-                let blendValue = specializedValue(layer.blends, appearance: appearance) as? String
-                let wash = layer.glass
-                    ? (tables: tables, translucency: tr) as (tables: [[Double]], translucency: Float)? : nil
-                drawLayer(
-                    image, fill: resolveFill(layer.fills, appearance: appearance),
-                    scale: layer.scale, translation: layer.translation,
-                    lighten: blendValue == "lighten", wash: wash,
-                    weights: tinted ? UnsafeMutablePointer(mutating: washWeights) : nil,
-                    into: &canvas)
-            }
-        }
-        var out = [UInt8]()
-        out.reserveCapacity(canvas.count * 4)
-        for (idx, p) in canvas.enumerated() {
-            if tinted {
-                let luma = (0.299 * Double(p.r) + 0.587 * Double(p.g) + 0.114 * Double(p.b))
-                    * Double(p.a) / 255
-                let w = Double(washWeights[idx])
-                let g = UInt8((luma + w * (255 - luma)).rounded())
-                out.append(contentsOf: [g, g, g, 255])
-            } else {
-                out.append(contentsOf: [p.b, p.g, p.r, 255])
-            }
-        }
-        return out
+        GlassRender.render(model: model, images: images, appearance: appearance)
     }
 
     // MARK: - Compilation
