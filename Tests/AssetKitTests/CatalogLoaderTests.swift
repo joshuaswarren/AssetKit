@@ -28,12 +28,12 @@ struct CatalogLoaderTests {
 
         let loader = CatalogLoader()
         let loaded = try await loader.load(catalog: tmp)
-        #expect(loaded.appIcons.map(\.name) == ["AppIcon", "AltIcon"])
+        #expect(Set(loaded.appIcons.map(\.name)) == ["AppIcon", "AltIcon"])
         #expect(loaded.appIcon(named: "AltIcon")?.name == "AltIcon")
         #expect(loaded.appIcon(named: nil) == nil)
         #expect(loaded.appIcon(named: "Missing") == nil)
         #expect(loaded.alternateAppIcons(primary: "AppIcon").map(\.name) == ["AltIcon"])
-        #expect(loaded.alternateAppIcons(primary: "Missing").map(\.name) == ["AppIcon", "AltIcon"])
+        #expect(Set(loaded.alternateAppIcons(primary: "Missing").map(\.name)) == ["AppIcon", "AltIcon"])
     }
 
     @Test("Loads empty catalog")

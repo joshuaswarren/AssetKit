@@ -30,20 +30,32 @@ public enum PNGSource {
 
     static func renditions(bytes: Data, context: Context) throws -> [Rendition] {
         let decoded = try decodeBGRA(bytes)
+        var body = BitmapBody(
+            width: decoded.width,
+            height: decoded.height,
+            pixelsBGRA: decoded.bgra8,
+            colorSpaceID: context.gamut.colorSpaceID,
+            kind: context.kind,
+            renditionName: context.filename
+        )
+        // Colorless 8-bit content (R = G = B in every pixel) is stored as
+        // gray+alpha, 'GA8 ' in gray gamma 22 (IceCubes ActionIcon oracle:
+        // an RGBA source of black + alpha compiles to Encoding Gray, cs 2).
+        // Tinted entries are skipped: they become gray through
+        // ImageRenderer.tintedRenditions, which reads BGRA.
+        if decoded.bgra16 == nil, context.appearance?.tintedLuminosity != true,
+           let gray = grayAlpha(premultipliedBGRA: decoded.bgra8) {
+            body.pixelsBGRA = gray
+            body.pixelFormat = .gray8
+            body.colorSpaceID = 2
+        }
         var out = [Rendition(
             name: context.assetName,
             idiom: context.idiom,
             scale: context.scale,
             appearance: context.appearance,
             gamut: context.gamut,
-            body: .bitmap(BitmapBody(
-                width: decoded.width,
-                height: decoded.height,
-                pixelsBGRA: decoded.bgra8,
-                colorSpaceID: context.gamut.colorSpaceID,
-                kind: context.kind,
-                renditionName: context.filename
-            ))
+            body: .bitmap(body)
         )]
         if let wide = decoded.bgra16 {
             // 16-bit sources get a second, extended-sRGB (P3) rendition:
@@ -79,6 +91,21 @@ public enum PNGSource {
                     renditionName: context.filename
                 ))
             ))
+        }
+        return out
+    }
+
+    /// Interleaved (gray, alpha) bytes when every premultiplied BGRA pixel
+    /// has b = g = r; nil as soon as one pixel carries color.
+    static func grayAlpha(premultipliedBGRA px: [UInt8]) -> [UInt8]? {
+        var out = [UInt8]()
+        out.reserveCapacity(px.count / 2)
+        var i = 0
+        while i < px.count {
+            guard px[i] == px[i + 1], px[i + 1] == px[i + 2] else { return nil }
+            out.append(px[i])
+            out.append(px[i + 3])
+            i += 4
         }
         return out
     }

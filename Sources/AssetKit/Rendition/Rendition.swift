@@ -213,6 +213,20 @@ struct BitmapBody: Sendable {
     var renditionName: String
 }
 
+extension BitmapBody {
+    /// Every alpha sample is full. Selects the MLEC opaque flag (assetutil
+    /// "Opaque"); half-float formats compare against 1.0 = 0x3C00.
+    var isOpaque: Bool {
+        let p = pixelsBGRA
+        switch pixelFormat {
+        case .bgra8: return stride(from: 3, to: p.count, by: 4).allSatisfy { p[$0] == 0xFF }
+        case .gray8: return stride(from: 1, to: p.count, by: 2).allSatisfy { p[$0] == 0xFF }
+        case .gray16: return stride(from: 2, to: p.count, by: 4).allSatisfy { p[$0] == 0x00 && p[$0 + 1] == 0x3C }
+        case .argb16: return stride(from: 6, to: p.count, by: 8).allSatisfy { p[$0] == 0x00 && p[$0 + 1] == 0x3C }
+        }
+    }
+}
+
 struct ColorBody: Sendable {
     /// Components in the color space's own order — RGB spaces carry 4
     /// (r, g, b, a), gray spaces carry 2 (white, alpha). actool quantizes

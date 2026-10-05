@@ -177,9 +177,7 @@ public struct XCAssetCompiler: Sendable {
             renditions.append(contentsOf: try ImageRenderer.appIconRenditions(
                 for: altAppIcon, files: plist.iconFiles))
         }
-        for input in alternateIconComposers {
-            var alternate = input
-            if alternate.idioms.isEmpty { alternate.idioms = iconComposer?.idioms ?? [] }
+        for alternate in alternateIconComposers {
             let compiled = try IconComposerCompiler.compile(input: alternate)
             renditions.append(contentsOf: compiled.renditions)
             alternates.append(alternate.name)

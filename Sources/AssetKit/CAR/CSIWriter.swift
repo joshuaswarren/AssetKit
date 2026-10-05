@@ -38,6 +38,7 @@ enum CSIWriter {
             width: body.width,
             height: body.height,
             bytesPerPixel: body.pixelFormat.bytesPerPixel,
+            opaque: body.isOpaque,
             pixels: body.pixelsBGRA
         )
 
@@ -267,6 +268,8 @@ enum CSIWriter {
             width: body.width,
             height: body.height,
             bytesPerPixel: 2,
+            // Unchanged from the verified symbol oracle shape (flags 3).
+            opaque: true,
             pixels: body.pixelsGA
         )
         let header = CSIHeader.encode(

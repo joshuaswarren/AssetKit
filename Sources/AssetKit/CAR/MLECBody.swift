@@ -5,7 +5,10 @@ import Foundation
 /// Layout verified against actool's reference Assets.car:
 ///
 ///   MLEC magic        4 bytes
-///   compressionType   u32  (0 = raw, 3 = LZFSE)
+///   flags             u32  (bit 0 set for these LZFSE chunk payloads; bit 1 =
+///                           every alpha sample is full: assetutil "Opaque".
+///                           IceCubes oracle car: 120 opaque bitmaps carry 2/3,
+///                           31 with partial alpha carry 0/1)
 ///   bytesPerPixel     u32  (actool writes the CONSTANT 4 — even for GA8,
 ///                           whose payload chunks are 2 bytes per pixel;
 ///                           verified on the base+tinted oracle car)
@@ -30,6 +33,7 @@ enum MLECBody {
         width: UInt32,
         height: UInt32,
         bytesPerPixel: UInt32 = 4,
+        opaque: Bool,
         pixels: [UInt8]
     ) -> Data {
         let bytesPerRow = Int(width) * Int(bytesPerPixel)
@@ -53,7 +57,7 @@ enum MLECBody {
 
         var w = ByteWriter()
         w.writeFourCC("MLEC")
-        w.writeLE(UInt32(3))                    // compressionType = 3 (LZFSE)
+        w.writeLE(UInt32(opaque ? 3 : 1))
         w.writeLE(UInt32(4))                    // bytesPerPixel: constant 4, like actool
         w.writeLE(UInt32(chunks.count))
 

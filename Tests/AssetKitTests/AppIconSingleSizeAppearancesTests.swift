@@ -35,6 +35,7 @@ struct AppIconSingleSizeAppearancesTests {
     /// Minimal valid 512x512-free: 1024x1024 would be slow; rendition keys
     /// and pixel formats do not depend on pixel size. 1x1 suffices.
     private func appIcon(
+        rgba: [UInt8] = [0xFF, 0xFF, 0xFF, 0xFF],
         images: [(filename: String, idiom: String, appearance: String?)]
     ) throws -> [Rendition] {
         let tmp = FileManager.default.temporaryDirectory
@@ -53,7 +54,7 @@ struct AppIconSingleSizeAppearancesTests {
         let json = "{\"images\":[\(entries.joined(separator: ","))],\"info\":{\"author\":\"xcode\",\"version\":1}}"
         try Data(json.utf8).write(to: dir.appendingPathComponent("Contents.json"))
         for image in images {
-            try Self.onePixelPNG().write(to: dir.appendingPathComponent(image.filename))
+            try Self.onePixelPNG(rgba: rgba).write(to: dir.appendingPathComponent(image.filename))
         }
         let contents = try JSONDecoder().decode(
             AppIconContents.self,
@@ -64,8 +65,8 @@ struct AppIconSingleSizeAppearancesTests {
         return try ImageRenderer.appIconRenditions(for: appIcon, files: files)
     }
 
-    /// 1x1 opaque white RGBA PNG, stored-deflate (dependency-free).
-    private static func onePixelPNG() -> Data {
+    /// 1x1 RGBA PNG (default opaque white), stored-deflate (dependency-free).
+    private static func onePixelPNG(rgba: [UInt8]) -> Data {
         func be32(_ value: UInt32) -> [UInt8] {
             withUnsafeBytes(of: value.bigEndian) { Array($0) }
         }
@@ -90,7 +91,7 @@ struct AppIconSingleSizeAppearancesTests {
         let ihdr: [UInt8] = [0, 0, 0, 0x0D] + Array("IHDR".utf8)
             + [0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]
             + be32(crc32(Data(Array("IHDR".utf8)) + Data([0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0])))
-        let raw: [UInt8] = [0, 0xFF, 0xFF, 0xFF, 0xFF]
+        let raw: [UInt8] = [0] + rgba
         var deflate: [UInt8] = [0x01, UInt8(raw.count), 0, UInt8(~raw.count & 0xFF), 0xFF]
         deflate.append(contentsOf: raw)
         var zlib: [UInt8] = [0x78, 0x01]
@@ -117,7 +118,8 @@ struct AppIconSingleSizeAppearancesTests {
 
     @Test("Universal icon with dark and tinted: rendition set, keys, pixel formats")
     func renditionSet() throws {
-        let renditions = try appIcon(images: [
+        // A colored pixel: colorless content compiles to GA8 (see grayContent).
+        let renditions = try appIcon(rgba: [0xFF, 0x80, 0x00, 0xFF], images: [
             ("Icon_1024x1024.png", "iphone", nil),
             ("Icon_1024x1024.png", "ipad", nil),
             ("Dark Icon.png", "iphone", "dark"),
@@ -227,9 +229,9 @@ struct AppIconSingleSizeAppearancesTests {
 
         // 1024 rows -> 341/341/341/1, four KCBC chunks (oracle verified).
         let body = MLECBody.encode(
-            width: 1024, height: 1024, bytesPerPixel: 2,
+            width: 1024, height: 1024, bytesPerPixel: 2, opaque: true,
             pixels: [UInt8](repeating: 0x80, count: 1024 * 2 * 1024))
-        #expect(u32(body, 4) == 3)  // compressionType
+        #expect(u32(body, 4) == 3)  // flags: LZFSE chunks + opaque
         #expect(u32(body, 8) == 4)  // bytesPerPixel constant, even for 2 B/px GA8
         #expect(u32(body, 12) == 4) // chunk count
         var pos = 16
@@ -244,14 +246,57 @@ struct AppIconSingleSizeAppearancesTests {
 
         // 120 rows -> three equal chunks of 40.
         let small = MLECBody.encode(
-            width: 120, height: 120,
+            width: 120, height: 120, opaque: false,
             pixels: [UInt8](repeating: 0, count: 120 * 120 * 4))
+        #expect(u32(small, 4) == 1)  // flags: LZFSE chunks, partial alpha
         #expect(u32(small, 12) == 3)
         #expect(u32(small, 28) == 40) // first KCBC chunkHeight
 
         // Degenerate height 1 -> single chunk.
-        let tiny = MLECBody.encode(width: 1, height: 1, pixels: [0, 0, 0, 0])
+        let tiny = MLECBody.encode(width: 1, height: 1, opaque: false, pixels: [0, 0, 0, 0])
         #expect(u32(tiny, 12) == 1)
+    }
+
+    @Test("Colorless content compiles to GA8 gray gamma 22; colored stays ARGB")
+    func grayContent() throws {
+        // IceCubes ActionIcon oracle: an RGBA source with R = G = B in every
+        // pixel is stored 'GA8 ', cs 2 (assetutil Encoding Gray).
+        let gray = try appIcon(rgba: [0x00, 0x00, 0x00, 0x80], images: [("Icon.png", "iphone", nil)])
+        let grayBodies = gray.compactMap { r -> BitmapBody? in
+            if case .bitmap(let b) = r.body { return b } else { return nil }
+        }
+        #expect(grayBodies.count == 1)
+        #expect(grayBodies.first?.pixelFormat == .gray8)
+        #expect(grayBodies.first?.colorSpaceID == 2)
+        #expect(grayBodies.first?.pixelsBGRA == [0x00, 0x80])
+        let colored = try appIcon(rgba: [0xFF, 0x80, 0x00, 0xFF], images: [("Icon.png", "iphone", nil)])
+        for r in colored {
+            if case .bitmap(let b) = r.body { #expect(b.pixelFormat == .bgra8) }
+        }
+    }
+
+    @Test("isOpaque reads the alpha channel of every pixel format")
+    func opacity() throws {
+        func body(_ format: BitmapBody.PixelFormat, _ pixels: [UInt8]) -> BitmapBody {
+            var b = BitmapBody(width: 1, height: 1, pixelsBGRA: pixels, colorSpaceID: 1,
+                               kind: .appIcon, renditionName: "x.png")
+            b.pixelFormat = format
+            return b
+        }
+        #expect(body(.bgra8, [1, 2, 3, 0xFF]).isOpaque)
+        #expect(!body(.bgra8, [1, 2, 3, 0xFE]).isOpaque)
+        #expect(body(.gray8, [7, 0xFF]).isOpaque)
+        #expect(!body(.gray8, [0, 0x80]).isOpaque)
+        // Half floats, little-endian: alpha 1.0 = 0x3C00.
+        #expect(body(.gray16, [0, 0, 0x00, 0x3C]).isOpaque)
+        #expect(!body(.gray16, [0, 0, 0x00, 0x38]).isOpaque)
+        #expect(body(.argb16, [0, 0, 0, 0, 0, 0, 0x00, 0x3C]).isOpaque)
+        #expect(!body(.argb16, [0, 0, 0, 0, 0, 0, 0x00, 0x00]).isOpaque)
+        // ActionIcon shape: black + partial alpha compiles to non-opaque GA8.
+        let gray = try appIcon(rgba: [0x00, 0x00, 0x00, 0x80], images: [("Icon.png", "iphone", nil)])
+        for r in gray {
+            if case .bitmap(let b) = r.body { #expect(!b.isOpaque) }
+        }
     }
 
     @Test("Tinted gray conversion: Rec. 709 luma and half-float 16-bit payload")
