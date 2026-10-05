@@ -79,30 +79,42 @@ enum BitmapKeys {
             w.writeLE(UInt32(0xFFFFFFFF))
             w.writeLE(UInt32(1))
             w.writeLE(assetKindMarker)
-            let slots = keyTokenCount - 6
+            // Variable-slot count: Apple's descriptors always carry
+            // (tokens - 6) u32 slots between the marker and the three -1
+            // sentinels, for every token count observed (8/9/10/13/14).
+            // Clamp at 0 so low-token catalogs never produce a negative
+            // range.
+            let slots = max(0, keyTokenCount - 6)
+            // Per-kind value templates. The first `slots` entries are
+            // written; any extra template entries are silently dropped
+            // (matching actool's truncation at high token counts), and
+            // missing entries are 1-filled (actool's colour/vector fills
+            // are all-1s at every observed token count).
+            var template: [UInt32]
             switch kind {
             case .color:
-                // Oracle (8/9/14-token color cars): all-ones slots.
-                for _ in 0..<slots { w.writeLE(UInt32(1)) }
+                // Oracle: all-1s at 8/9/13/14 tokens.
+                template = [UInt32](repeating: 1, count: slots)
             case .appIconSingleSize:
-                // [groups, 1, 3] then 3s (9t: [6,1,3]; 10t: [6,1,3,3]).
-                w.writeLE(renditionGroups)
-                w.writeLE(UInt32(1))
-                w.writeLE(UInt32(3))
-                for _ in 0..<(slots - 3) { w.writeLE(UInt32(3)) }
+                // [groups, 1, 3] then 3s to fill
+                // (9t base+dark: [6,1,3]; 10t base+tinted: [6,1,3,3];
+                //  9t base-only: [2,1,3]).
+                template = [renditionGroups, 1, 3]
+                template += [UInt32](repeating: 3, count: max(0, slots - 3))
             case .appIcon:
                 // Classic multi-size oracle (9t): [70, (1,1), 63].
-                w.writeLE(UInt32(70))
-                w.writeLE(UInt16(1))
-                w.writeLE(UInt16(1))
-                w.writeLE(UInt32(63))
-                for _ in 0..<(slots - 3) { w.writeLE(UInt32(1)) }
+                template = [70, 0x0001_0001, 63]
+                template += [UInt32](repeating: 1, count: max(0, slots - 3))
             case .image, .vector, .vectorDiscarded:
-                w.writeLE(idiomSubtypeCount)
-                w.writeLE(UInt16(1))
-                w.writeLE(UInt16(0))
-                w.writeLE(UInt32(1))
-                for _ in 0..<(slots - 3) { w.writeLE(UInt32(1)) }
+                // Oracle (13t no-app-icon): all-1s for 0x0e/0x0f;
+                // (14t full NNW): [1, 1, 0x10, 4, 7, 1, 0x20, 1] for the
+                // preserving 0x0e with non-default rendering — content-
+                // dependent, we emit all-1s (safe default, matches most
+                // assets).
+                template = [UInt32](repeating: 1, count: slots)
+            }
+            for i in 0..<slots {
+                w.writeLE(i < template.count ? template[i] : 1)
             }
             for _ in 0..<3 {
                 w.writeLE(UInt32(0xFFFFFFFF))
