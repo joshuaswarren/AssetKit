@@ -230,8 +230,10 @@ extension CSIWriter {
                 fill.write([0x00])
             }
         } else {
+            var namedPrevious = false
             for layer in body.layers {
-                fill.writeLE(UInt32(0))
+                if !namedPrevious { fill.writeLE(UInt32(0)) }
+                namedPrevious = layer.fillName != nil
                 fill.writeLE(UInt32(layer.hasLighting ? 1 : 0))
                 fill.writeLE(UInt32(0))
                 if let fillName = layer.fillName {
