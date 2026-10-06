@@ -203,7 +203,10 @@ enum ImageRenderer {
                 )
             }
         }
-        for (group, entries) in groups {
+        // Dictionary order is randomized per process; emit groups in key order.
+        for (group, entries) in groups.sorted(by: {
+            ($0.key.idiom.rawValueByte, $0.key.subtype) < ($1.key.idiom.rawValueByte, $1.key.subtype)
+        }) {
             out.append(Rendition(
                 name: appIcon.name,
                 idiom: group.idiom,

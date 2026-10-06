@@ -132,7 +132,10 @@ struct CatalogLoader: Sendable {
     /// `properties.provides-namespace` prefixes its assets' names with `<folder>/`, as actool does.
     private func walk(_ root: URL, prefix: String, fileManager fm: FileManager,
                       visit: (URL, String) throws -> Void) throws {
+        // Sorted: directory listing order is unspecified, and it drives the
+        // rendition order, hence the car's block layout.
         let children = try fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey])
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
         for child in children {
             let values = try child.resourceValues(forKeys: [.isDirectoryKey])
             guard values.isDirectory == true else { continue }
