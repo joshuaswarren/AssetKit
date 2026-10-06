@@ -158,10 +158,12 @@ struct RenditionKey: Hashable, Sendable {
                 self.part = preservesVector
                     ? Part.vectorSource.rawValue
                     : Part.image.rawValue
-            case .jpeg:
-                // JPEG sits in the generic-image lookup category — CoreUI
-                // decodes the JPG body itself at runtime and returns the
-                // resulting bitmap from UIImage(named:).
+            case .jpeg, .heif:
+                // JPEG and the preserved HEIF sit in the generic-image
+                // lookup category — CoreUI decodes those bodies itself at
+                // runtime and returns the resulting bitmap from
+                // UIImage(named:) (avatar probe: HEIF key element 85,
+                // part 181, like JPEG).
                 self.part = Part.image.rawValue
             }
         }

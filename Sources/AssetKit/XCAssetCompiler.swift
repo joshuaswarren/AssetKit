@@ -5,13 +5,20 @@ public struct CompileResult: Sendable {
     /// contained no assets (callers receive a structurally valid empty CAR).
     public var carData: Data
 
+    /// Number of renditions the catalog produced. actool writes no
+    /// `Assets.car` at all when this is zero (Apple oracle: a catalog whose
+    /// only asset is dropped for the platform, or an empty one, compiles to
+    /// just the partial-info plist), and callers use it to match that.
+    public var renditionCount: Int
+
     /// Glue needed to ship an `.appiconset` as part of an iOS app bundle.
     /// `nil` if the catalog contained no `.appiconset`. Present iff the
     /// catalog contained exactly one `.appiconset`.
     public var appIconBundle: AppIconBundle?
 
-    public init(carData: Data, appIconBundle: AppIconBundle? = nil) {
+    public init(carData: Data, renditionCount: Int, appIconBundle: AppIconBundle? = nil) {
         self.carData = carData
+        self.renditionCount = renditionCount
         self.appIconBundle = appIconBundle
     }
 }
@@ -71,15 +78,21 @@ public struct XCAssetCompiler: Sendable {
     /// `PdftoCairoRasterizer`, which shells out to poppler's `pdfinfo` and
     /// `pdftocairo`. Replace when you need a different rasteriser.
     public var pdfRasterizer: any PDFRasterizer
+    /// Strategy used to decode `.heic`/`.heif` sources. Defaults to
+    /// `HeifConvertDecoder`, which shells out to libheif's `heif-convert`.
+    /// Replace when you need a different decoder.
+    public var heicDecoder: any HEICDecoder
 
     public init(
         deploymentTarget: String,
         svgRasterizer: any SVGRasterizer = RsvgConvertRasterizer(),
-        pdfRasterizer: any PDFRasterizer = PdftoCairoRasterizer()
+        pdfRasterizer: any PDFRasterizer = PdftoCairoRasterizer(),
+        heicDecoder: any HEICDecoder = HeifConvertDecoder()
     ) {
         self.deploymentTarget = deploymentTarget
         self.svgRasterizer = svgRasterizer
         self.pdfRasterizer = pdfRasterizer
+        self.heicDecoder = heicDecoder
     }
 
     public func compile(catalog catalogURL: URL, iconComposer: IconComposerCompiler.Input? = nil) async throws -> CompileResult {
@@ -92,7 +105,8 @@ public struct XCAssetCompiler: Sendable {
             renditions.append(contentsOf: try ImageRenderer.renditions(
                 for: imageSet,
                 svgRasterizer: svgRasterizer,
-                pdfRasterizer: pdfRasterizer
+                pdfRasterizer: pdfRasterizer,
+                heicDecoder: heicDecoder
             ))
         }
         for colorSet in loaded.colorSets {
@@ -131,6 +145,6 @@ public struct XCAssetCompiler: Sendable {
         let writer = CARWriter(deploymentTarget: deploymentTarget, renditions: renditions)
         let bytes = try writer.write()
 
-        return CompileResult(carData: bytes, appIconBundle: appIconBundle)
+        return CompileResult(carData: bytes, renditionCount: renditions.count, appIconBundle: appIconBundle)
     }
 }

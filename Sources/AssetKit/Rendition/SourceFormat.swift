@@ -17,6 +17,7 @@ enum SourceFormat {
     case svg
     case jpeg
     case pdf
+    case heic
 
     static func detect(filename: String) -> SourceFormat? {
         switch (filename as NSString).pathExtension.lowercased() {
@@ -24,6 +25,9 @@ enum SourceFormat {
         case "svg": return .svg
         case "jpg", "jpeg": return .jpeg
         case "pdf": return .pdf
+        // .heic and .heif are the same ISO-BMFF/HEVC container; catalogs
+        // in the wild use both extensions (IceCubes avatar.imageset: .heic).
+        case "heic", "heif": return .heic
         default: return nil
         }
     }

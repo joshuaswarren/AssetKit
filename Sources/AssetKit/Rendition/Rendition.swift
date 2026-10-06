@@ -241,6 +241,10 @@ struct PreservedSourceBody: Sendable {
     enum Format: Sendable {
         case svg
         case jpeg(width: UInt32, height: UInt32)
+        /// HEIC/HEIF source preserved verbatim. Like JPEG, the TVL carries
+        /// the decoded pixel dimensions (sniffed from the decoder's PNG
+        /// output, populated by `HEICSource`).
+        case heif(width: UInt32, height: UInt32)
         /// PDF source. `preservesVector` mirrors the imageset's
         /// `preserves-vector-representation`: it selects the rendition key
         /// slot — the dedicated vector part at scale 1 when preserved, the

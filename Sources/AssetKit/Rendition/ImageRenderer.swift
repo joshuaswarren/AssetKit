@@ -8,7 +8,8 @@ enum ImageRenderer {
     static func renditions(
         for set: LoadedImageSet,
         svgRasterizer: any SVGRasterizer,
-        pdfRasterizer: any PDFRasterizer
+        pdfRasterizer: any PDFRasterizer,
+        heicDecoder: any HEICDecoder
     ) throws -> [Rendition] {
         var out: [Rendition] = []
         for image in set.contents.images {
@@ -55,6 +56,21 @@ enum ImageRenderer {
                     filename: filename
                 )
                 out.append(contentsOf: try JPEGSource.renditions(bytes: bytes, context: ctx))
+            case .heic:
+                let ctx = HEICSource.Context(
+                    assetName: set.name,
+                    idiom: image.idiom,
+                    scale: image.scale,
+                    appearance: appearance,
+                    gamut: image.displayGamut ?? .sRGB,
+                    filename: filename,
+                    kind: .image
+                )
+                out.append(contentsOf: try HEICSource.renditions(
+                    bytes: bytes,
+                    context: ctx,
+                    decoder: heicDecoder
+                ))
             case .pdf:
                 let properties = set.contents.properties
                 let intent: BitmapBody.RenderingIntent = switch properties?

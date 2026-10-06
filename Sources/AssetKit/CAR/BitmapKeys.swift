@@ -290,7 +290,7 @@ enum BitmapKeys {
                 case .svg: return .vector
                 case .pdf(let preservesVector):
                     return preservesVector ? .vector : .vectorDiscarded
-                case .jpeg: break
+                case .jpeg, .heif: break
                 }
             }
         }

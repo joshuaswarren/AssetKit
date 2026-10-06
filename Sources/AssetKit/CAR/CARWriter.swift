@@ -255,11 +255,12 @@ struct CARWriter: Sendable {
         case .preservedSource(let body):
             // SVG and PDF renditions are scale-free; the reference leaves
             // scaleFactor=0 for them. JPGs respect the @Nx suffix the same
-            // way PNGs do.
+            // way PNGs do; the preserved HEIF does too (avatar probe:
+            // header scaleFactor 100).
             let scaleFactor: UInt32 = {
                 switch body.format {
                 case .svg, .pdf: return 0
-                case .jpeg: return UInt32(rendition.scale?.factor ?? 1) * 100
+                case .jpeg, .heif: return UInt32(rendition.scale?.factor ?? 1) * 100
                 }
             }()
             return CSIWriter.preservedSource(body: body, scaleFactor: scaleFactor)

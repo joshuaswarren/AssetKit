@@ -112,7 +112,9 @@ enum KeyFormat {
         // Symbol renditions widen the tuple with their weight, size, and
         // deployment-target slots (Apple symbol oracle: a symbol-only
         // catalog keys 12 attributes; the full NNW catalog 14 once the
-        // icon's dimension1 pack joins).
+        // icon's dimension1 pack joins). A preserved-HEIF rendition widens
+        // it with the deployment-target slot alone (avatar probe: 9
+        // attributes, deploymentTarget included, no symbols).
         let usesGlyphs = renditions.contains {
             switch $0.body {
             case .symbolVector, .symbolCached: return true
@@ -122,6 +124,8 @@ enum KeyFormat {
         if usesGlyphs {
             used.insert(.glyphWeight)
             used.insert(.glyphSize)
+        }
+        if usesGlyphs || renditions.contains(where: { $0.deploymentTarget != nil }) {
             used.insert(.deploymentTarget)
         }
         return canonicalKeyOrder.filter { used.contains($0) }

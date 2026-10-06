@@ -16,6 +16,7 @@ public enum XCAssetCompilerError: Error, Sendable, Equatable {
     case svgDimensionsMissing(asset: String, filename: String)
     case svgRasterizationFailed(asset: String, filename: String, underlying: String)
     case pdfRasterizationFailed(asset: String, filename: String, underlying: String)
+    case heicDecodeFailed(asset: String, filename: String, underlying: String)
 }
 
 extension XCAssetCompilerError: CustomStringConvertible {
@@ -51,6 +52,8 @@ extension XCAssetCompilerError: CustomStringConvertible {
             return "Failed to rasterise SVG asset '\(asset)' file '\(filename)': \(underlying)"
         case .pdfRasterizationFailed(let asset, let filename, let underlying):
             return "Failed to rasterise PDF asset '\(asset)' file '\(filename)': \(underlying)"
+        case .heicDecodeFailed(let asset, let filename, let underlying):
+            return "Failed to decode HEIC asset '\(asset)' file '\(filename)': \(underlying)"
         }
     }
 }

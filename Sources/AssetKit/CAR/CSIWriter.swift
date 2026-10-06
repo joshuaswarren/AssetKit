@@ -131,6 +131,21 @@ enum CSIWriter {
                 .bitmapFlag,
             ])
             envelope = DWAREnvelope.encode(flags: 0, payload: [UInt8](body.sourceData))
+        case .heif(let width, let height):
+            // Avatar probe: the HEIF rendition is the JPEG shape with the
+            // HEIF pixel format — same trimmed TVL (no bytes-per-row), DWAR
+            // envelope flags 0 around the untouched source bytes, colorSpace
+            // 0, layout 12, flags 0x10.
+            layout = .bitmapIcon
+            pixelFormat = CSIHeader.pixelFormatHEIF
+            renditionFlags = 0x10
+            tvl = CSITVL.encode([
+                .bitmapDescriptor(width: width, height: height),
+                .destRect(width: width, height: height),
+                .sliceScale,
+                .bitmapFlag,
+            ])
+            envelope = DWAREnvelope.encode(flags: 0, payload: [UInt8](body.sourceData))
         case .pdf:
             // Same shape as SVG (NNW oracle: PDF vector renditions carry
             // flags 0x04, pixelFormat 'PDF ', the trimmed vector TVL, and a

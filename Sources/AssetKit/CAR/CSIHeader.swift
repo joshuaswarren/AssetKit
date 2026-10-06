@@ -20,6 +20,9 @@ enum CSIHeader {
     /// dispatches on this constant to invoke its JPEG decoder on the
     /// DWAR-wrapped body.
     static let pixelFormatJPEG: UInt32 = 0x4A504547
+    /// 'HEIF' — preserved HEIC/HEIF source (avatar probe: pixelFormat
+    /// 0x48454946, colorSpace 0).
+    static let pixelFormatHEIF: UInt32 = 0x48454946
 
     /// `pixelFormat` = 'SVG ' (trailing space) as an LE multi-char constant.
     /// Produces file bytes space,G,V,S. Used for preserved-source SVG

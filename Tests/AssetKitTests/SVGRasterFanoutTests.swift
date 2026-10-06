@@ -94,7 +94,8 @@ struct SVGRasterFanoutTests {
             renditions.append(contentsOf: try ImageRenderer.renditions(
                 for: imageSet,
                 svgRasterizer: svgRasterizer,
-                pdfRasterizer: StubPDFRasterizer()
+                pdfRasterizer: StubPDFRasterizer(),
+                heicDecoder: StubHEICDecoder()
             ))
         }
         return renditions
