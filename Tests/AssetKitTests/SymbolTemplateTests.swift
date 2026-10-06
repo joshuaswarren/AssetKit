@@ -68,7 +68,8 @@ struct SymbolTemplateTests {
             directory: Self.fixture,
             filename: "markAllAsRead2.svg"
         )
-        let renditions = try SymbolRenderer.renditions(for: set, svgRasterizer: RsvgConvertRasterizer())
+        let prepared = try SymbolRenderer.prepare(for: set, svgRasterizer: RsvgConvertRasterizer())
+        let renditions = SymbolRenderer.renditions(for: [prepared])
         let vector = renditions.first { if case .symbolVector = $0.body { return true } else { return false } }!
         guard case .symbolVector(let body) = vector.body else { fatalError() }
         return CSIWriter.symbolVector(body: body)
@@ -89,7 +90,8 @@ struct SymbolTemplateTests {
             directory: Self.fixture,
             filename: "markAllAsRead2.svg"
         )
-        let renditions = try SymbolRenderer.renditions(for: set, svgRasterizer: RsvgConvertRasterizer())
+        let prepared = try SymbolRenderer.prepare(for: set, svgRasterizer: RsvgConvertRasterizer())
+        let renditions = SymbolRenderer.renditions(for: [prepared])
         let cached = renditions.first { rendition in
             if case .symbolCached(let body) = rendition.body { return body.cachedIndex == 0 && rendition.scale == .x1 }
             return false
@@ -110,7 +112,8 @@ struct SymbolTemplateTests {
             directory: Self.fixture,
             filename: "markAllAsRead2.svg"
         )
-        let renditions = try SymbolRenderer.renditions(for: set, svgRasterizer: RsvgConvertRasterizer())
+        let prepared = try SymbolRenderer.prepare(for: set, svgRasterizer: RsvgConvertRasterizer())
+        let renditions = SymbolRenderer.renditions(for: [prepared])
         let packed = renditions.first { if case .symbolPacked = $0.body { return true } else { return false } }!
         guard case .symbolPacked(let body) = packed.body else { fatalError() }
         let data = CSIWriter.symbolPacked(body: body, scaleFactor: 100)
