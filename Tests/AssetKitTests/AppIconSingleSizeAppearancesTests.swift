@@ -128,14 +128,11 @@ struct AppIconSingleSizeAppearancesTests {
             ("Tint Icon.png", "iphone", "tinted"),
             ("Tint Icon.png", "ipad", "tinted"),
         ])
-        // 2 base + 2 dark + 4 tinted (2 gray encodings x 2 idioms) + 2 MultiSized.
-        #expect(renditions.count == 10)
+        // 2 base + 2 dark + 2 tinted (colored: ARGB) + 2 MultiSized.
+        #expect(renditions.count == 8)
 
         let format = KeyFormat.format(for: renditions)
-        #expect(format == [
-            .appearance, .localization, .scale, .idiom, .subtype,
-            .dimension2, .displayGamut, .identifier, .element, .part,
-        ])
+        #expect(format == v1KeyFormat)
 
         struct Row: Hashable {
             var appearance: UInt16
@@ -156,13 +153,16 @@ struct AppIconSingleSizeAppearancesTests {
                 continue
             }
             let tokens = key(rendition, format: format)
+            func token(_ attribute: AttributeID) -> UInt16 {
+                format.firstIndex(of: attribute).map { tokens[$0] } ?? 0
+            }
             rows.insert(Row(
-                appearance: tokens[0],
-                scale: tokens[2],
-                idiom: tokens[3],
-                dimension2: tokens[5],
-                gamut: tokens[6],
-                part: tokens[9],
+                appearance: token(.appearance),
+                scale: token(.scale),
+                idiom: token(.idiom),
+                dimension2: token(.dimension2),
+                gamut: token(.displayGamut),
+                part: token(.part),
                 pixelFormat: body.pixelFormat
             ))
         }
@@ -175,12 +175,11 @@ struct AppIconSingleSizeAppearancesTests {
             // dark: same pixels encoding, key appearance 1.
             Row(appearance: 1, scale: 1, idiom: idiomPhone, dimension2: 1, gamut: 0, part: 220, pixelFormat: .bgra8),
             Row(appearance: 1, scale: 1, idiom: idiomPad, dimension2: 1, gamut: 0, part: 220, pixelFormat: .bgra8),
-            // tinted 8-bit: gray gamma 22, gamut token 0.
-            Row(appearance: 10, scale: 1, idiom: idiomPhone, dimension2: 1, gamut: 0, part: 220, pixelFormat: .gray8),
-            Row(appearance: 10, scale: 1, idiom: idiomPad, dimension2: 1, gamut: 0, part: 220, pixelFormat: .gray8),
-            // tinted 16-bit: extended gray, P3 gamut token 1.
-            Row(appearance: 10, scale: 1, idiom: idiomPhone, dimension2: 1, gamut: 1, part: 220, pixelFormat: .gray16),
-            Row(appearance: 10, scale: 1, idiom: idiomPad, dimension2: 1, gamut: 1, part: 220, pixelFormat: .gray16),
+            // tinted, colored source: stays ARGB like the base, key
+            // appearance 10 (IceCubes Icon.appiconset oracle). The neutral
+            // GA8/GA16 form is pinned by `tintedPixels`.
+            Row(appearance: 10, scale: 1, idiom: idiomPhone, dimension2: 1, gamut: 0, part: 220, pixelFormat: .bgra8),
+            Row(appearance: 10, scale: 1, idiom: idiomPad, dimension2: 1, gamut: 0, part: 220, pixelFormat: .bgra8),
         ]
         #expect(rows == expected)
     }
@@ -349,6 +348,33 @@ struct AppIconSingleSizeAppearancesTests {
         }
     }
 
+    @Test("BITMAPKEYS slots follow the KEYFORMAT at 13 tokens (IceCubes app-all)")
+    func bitmapKeysThirteenTokens() throws {
+        // Apple's 13-token IceCubes car: [appearance, localization, scale,
+        // idiom, subtype, glyphWeight, glyphSize, dimension2,
+        // deploymentTarget, displayGamut, identifier, element, part].
+        let format = canonicalKeyOrder.filter { $0 != .dimension1 }
+        #expect(format.count == 13)
+        func slots(_ d: BitmapKeys.Descriptor) -> [UInt32] {
+            let data = d.encode()
+            return (7..<14).map { i in data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: i * 4, as: UInt32.self) } }
+        }
+        let icon = try appIcon(rgba: [0xFF, 0x80, 0x00, 0xFF], images: [
+            ("Icon.png", "iphone", nil), ("Icon.png", "ipad", nil),
+        ])
+        let single = try #require(BitmapKeys.descriptor(forAsset: "AppIcon", renditions: icon, keyFormat: format))
+        #expect(slots(single) == [6, 1, 1, 1, 3, 1, 1])
+        var wide = single
+        wide.hasWideGamut = true
+        #expect(slots(wide) == [6, 1, 1, 1, 3, 1, 3])
+        let stack = BitmapKeys.Descriptor(kind: .iconComposerIcon, idiomSubtypeCount: 0, keyFormat: format)
+        #expect(slots(stack) == [7, 1, 1, 1, 3, 1, 1])
+        var image = BitmapKeys.Descriptor(kind: .image, idiomSubtypeCount: 0, keyFormat: format)
+        #expect(slots(image) == [1, 1, 1, 1, 1, 1, 1])
+        image.hasWideGamut = true
+        #expect(slots(image) == [1, 1, 1, 1, 1, 1, 3])
+    }
+
     @Test("BITMAPKEYS single-size descriptors match the cs1/tint oracles")
     func bitmapKeysDescriptors() throws {
         // cs1 oracle (base+dark, 9-token KEYFORMAT): 52 bytes,
@@ -360,7 +386,7 @@ struct AppIconSingleSizeAppearancesTests {
             ("Dark Icon.png", "ipad", "dark"),
         ])
         let darkDescriptor = try #require(BitmapKeys.descriptor(
-            forAsset: "AppIcon", renditions: dark, keyTokenCount: 9))
+            forAsset: "AppIcon", renditions: dark, keyFormat: KeyFormat.format(for: dark)))
         #expect(darkDescriptor.encode() == bytes(
             "01000000000000002800000009000000ffffffff0100000002000000060000000100000003000000ffffffffffffffffffffffff"))
 
@@ -373,7 +399,7 @@ struct AppIconSingleSizeAppearancesTests {
             ("Tint Icon.png", "ipad", "tinted"),
         ])
         let tintDescriptor = try #require(BitmapKeys.descriptor(
-            forAsset: "AppIcon", renditions: tinted, keyTokenCount: 10))
+            forAsset: "AppIcon", renditions: tinted, keyFormat: KeyFormat.format(for: tinted)))
         let tintEncoded = tintDescriptor.encode()
         let tintExpected = bytes(
             "01000000000000002c0000000a000000ffffffff010000000200000006000000010000000300000003000000ffffffffffffffffffffffff")

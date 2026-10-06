@@ -28,11 +28,14 @@ enum BitmapKeys {
         var countOverride: UInt32? = nil
         /// Icon rendition groups (see `encode`) for the single-size shape.
         var renditionGroups: UInt32 = 0
-        /// Icon Composer icon descriptor slots (see `iconComposerIcon`).
-        var stackExpansion: UInt32 = 0
-        var stackLayerCount: UInt32 = 0
-        /// The catalog's KEYFORMAT token count (drives hdrSize/keyLen/size).
-        var keyTokenCount: Int = 9
+        /// Some rendition of the asset is keyed display-gamut P3 (a wide
+        /// ARGB-16 rendition, or a tinted icon's GA16): Apple then writes 3
+        /// in the displayGamut slot.
+        var hasWideGamut: Bool = false
+        /// The catalog's KEYFORMAT. Its length drives hdrSize/keyLen/size;
+        /// its order places the variable slots (see `encode`).
+        var keyFormat: [AttributeID] = v1KeyFormat
+        var keyTokenCount: Int { keyFormat.count }
 
         enum Kind {
             case appIcon
@@ -44,48 +47,38 @@ enum BitmapKeys {
             /// PDF `.imageset` assets without
             /// `preserves-vector-representation`: the vector bytes still
             /// ship (as the scale-0 generic-image rendition) but the asset
-            /// classifies as raster-derived. Apple's BITMAPKEYS marker for
-            /// these is 0x0f (NNW oracle: accountNewsBlur), distinct from
-            /// the 0x0e vector and 0x04 bitmap markers.
+            /// classifies as raster-derived.
             case vectorDiscarded
             /// `.colorset` assets. actool 27.0 writes one BITMAPKEYS row per
-            /// colorset too (marker 0x02, variable section shaped like the
-            /// image one).
+            /// colorset too.
             case color
             /// Single-size (1024 universal) `.appiconset` — the Icon
-            /// Composer / Xcode 14+ form. actool 27.0 emits a 48-byte
-            /// descriptor with marker 0x02 and a shorter variable section
-            /// (verified against the democar2 oracle).
+            /// Composer / Xcode 14+ form.
             case appIconSingleSize
-            /// `.symbolset` assets. Apple's marker is 0x0e (vector source,
-            /// like preserving PDF sets) but the variable slots differ
+            /// `.symbolset` assets. Marker 0x0e; the variable slots differ
             /// from all-1s: 12-token oracle [1, 1, 0x10, 4, 7, 0x20],
             /// 14-token oracle [1, 1, 0x10, 4, 7, 1, 0x20, 1] — the 0x20
             /// sits at index keyTokenCount/2 - 1 in both.
             case symbol
             /// Any asset of an Icon Composer `.icon` compilation other than
             /// the icon itself (colors, gradients, groups, the layer image).
-            /// The IceCubes oracle marks all of them 0x02 with all-1 slots.
+            /// The IceCubes oracle gives all of them all-1 slots.
             case iconComposerAsset
-            /// The icon asset itself (name == --app-icon): marker 0x02,
-            /// slots [stack child expansion across appearances, 1, stack
-            /// layer count] (IceCubes oracle: [7, 1, 3]).
+            /// The icon asset itself (the one carrying the stack): idiom
+            /// slot 7 and dimension2 slot 3 (see `encode`).
             case iconComposerIcon
         }
 
-        /// Slot 6 of the header (the only header u32 that varies by kind).
-        /// `0x04` for bitmap-source assets (PNG, JPG); `0x0e` for classic
-        /// appicons and vector sources; `0x0f` for non-preserving PDF
-        /// sets; `0x02` for single-size appicons and colors (actool 27.0
-        /// oracles).
+        /// The scales the asset's renditions are keyed at, bit `1 << scale`
+        /// (header slot 6). Apple's oracles: 1x imagesets, colors, icons
+        /// 0x02 (IceCubes 39 of 39, NNW, Mastodon); a 2x-only imageset 0x04;
+        /// 1x/2x/3x bitmap and vector sets 0x0e; a non-preserving PDF set,
+        /// whose vector sits at scale 0, 0x0f.
+        var scaleMask: UInt32 = 0x02
+
+        /// Symbols keep the verified Apple symbol-oracle value 0x0e.
         private var assetKindMarker: UInt32 {
-            switch kind {
-            case .image: return 0x04
-            case .vector, .appIcon, .symbol: return 0x0e
-            case .vectorDiscarded: return 0x0f
-            case .appIconSingleSize, .color: return 0x02
-            case .iconComposerAsset, .iconComposerIcon: return 0x02
-            }
+            kind == .symbol ? 0x0e : scaleMask
         }
 
         func encode() -> Data {
@@ -103,30 +96,27 @@ enum BitmapKeys {
             // Clamp at 0 so low-token catalogs never produce a negative
             // range.
             let slots = max(0, keyTokenCount - 6)
-            // Per-kind value templates. The first `slots` entries are
-            // written; any extra template entries are silently dropped
-            // (matching actool's truncation at high token counts), and
-            // missing entries are 1-filled (actool's colour/vector fills
-            // are all-1s at every observed token count).
-            var template: [UInt32]
+            // Slot k describes KEYFORMAT attribute k + 3 (the attributes from
+            // idiom on). Apple's values, every oracle so far (9, 10, 13, 14
+            // tokens; IceCubes app-all, NNW, democar2, the cs1/tint pair):
+            // 1 everywhere, except the idiom slot of an icon (its rendition
+            // group count), the dimension2 slot of an icon (3), and the
+            // displayGamut slot of an asset with P3-keyed renditions (3).
+            var template = [UInt32](repeating: 1, count: slots)
+            func set(_ attribute: AttributeID, _ value: UInt32) {
+                guard let index = keyFormat.firstIndex(of: attribute), index >= 3, index - 3 < slots else { return }
+                template[index - 3] = value
+            }
             switch kind {
-            case .color:
-                // Oracle: all-1s at 8/9/13/14 tokens.
-                template = [UInt32](repeating: 1, count: slots)
-            case .iconComposerAsset:
-                // IceCubes oracle (9t): all-1s for colors, gradients,
-                // groups, and the layer image.
-                template = [UInt32](repeating: 1, count: slots)
+            case .color, .iconComposerAsset, .image, .vector, .vectorDiscarded:
+                break
             case .iconComposerIcon:
-                // IceCubes oracle (9t): [7, 1, 3] — stack child expansion
-                // across appearances, 1, stack layer count.
-                template = [stackExpansion, 1, stackLayerCount]
+                // IceCubes: 7 for every Icon Composer stack, 2 to 4 groups.
+                set(.idiom, 7)
+                set(.dimension2, 3)
             case .appIconSingleSize:
-                // [groups, 1, 3] then 3s to fill
-                // (9t base+dark: [6,1,3]; 10t base+tinted: [6,1,3,3];
-                //  9t base-only: [2,1,3]).
-                template = [renditionGroups, 1, 3]
-                template += [UInt32](repeating: 3, count: max(0, slots - 3))
+                set(.idiom, renditionGroups)
+                set(.dimension2, 3)
             case .appIcon:
                 // Classic multi-size oracle (9t): [70, (1,1), 63].
                 template = [70, 0x0001_0001, 63]
@@ -141,13 +131,9 @@ enum BitmapKeys {
                 if slots > 0 {
                     template[max(0, keyTokenCount / 2 - 1)] = 0x20
                 }
-            case .image, .vector, .vectorDiscarded:
-                // Oracle (13t no-app-icon): all-1s for 0x0e/0x0f;
-                // (14t full NNW): [1, 1, 0x10, 4, 7, 1, 0x20, 1] for the
-                // preserving 0x0e with non-default rendering — content-
-                // dependent, we emit all-1s (safe default, matches most
-                // assets).
-                template = [UInt32](repeating: 1, count: slots)
+            }
+            if hasWideGamut, kind != .symbol, kind != .appIcon {
+                set(.displayGamut, 3)
             }
             for i in 0..<slots {
                 w.writeLE(i < template.count ? template[i] : 1)
@@ -182,7 +168,7 @@ enum BitmapKeys {
     static func descriptor(
         forAsset name: String,
         renditions: [Rendition],
-        keyTokenCount: Int
+        keyFormat: [AttributeID]
     ) -> Descriptor? {
         let hasDescribableRendition = renditions.contains { rendition in
             if rendition.iconComposerSource { return true }
@@ -192,24 +178,23 @@ enum BitmapKeys {
             }
         }
         guard hasDescribableRendition else { return nil }
+        let hasWideGamut = renditions.contains { $0.gamut == .displayP3 }
+        let scaleMask = renditions.reduce(UInt32(0)) { mask, rendition in
+            mask | (1 << UInt32(RenditionKey(rendition: rendition).scale))
+        }
 
         // Icon Composer sources: the icon asset (the one carrying the
-        // stack) gets the [expansion, 1, layerCount] descriptor, every
-        // other asset of the compilation the all-1s 0x02 descriptor.
+        // stack) gets the icon descriptor, every other asset of the
+        // compilation the all-1s 0x02 descriptor.
         if renditions.contains(where: { $0.iconComposerSource }) {
-            if case .iconImageStack(let stack) = renditions.first(where: {
+            let isStack = renditions.contains {
                 if case .iconImageStack = $0.body { return true }
                 return false
-            })?.body {
-                let slots = stack.bitmapKeysSlots
-                return Descriptor(
-                    kind: .iconComposerIcon,
-                    idiomSubtypeCount: 0,
-                    stackExpansion: slots.expansion,
-                    stackLayerCount: slots.layerCount,
-                    keyTokenCount: keyTokenCount)
             }
-            return Descriptor(kind: .iconComposerAsset, idiomSubtypeCount: 0, keyTokenCount: keyTokenCount)
+            return Descriptor(
+                kind: isStack ? .iconComposerIcon : .iconComposerAsset,
+                idiomSubtypeCount: 0, hasWideGamut: hasWideGamut, keyFormat: keyFormat,
+                scaleMask: scaleMask)
         }
 
         let kind = inferKind(from: renditions)
@@ -229,20 +214,15 @@ enum BitmapKeys {
            bitmapIndices.count <= 1 {
             effectiveKind = .appIconSingleSize
             countOverride = UInt32(renditions.count)
-            // Icon rendition groups: distinct (idiom, appearance) bitmap
-            // variants — the tinted GA8/GA16 encodings share one group —
-            // plus one per MultiSized container (cs1: 4 + 2 = 6; tint:
-            // base(2) + tinted(2) + MS(2) = 6).
-            let bitmapGroups = Set(renditions.compactMap { rendition -> UInt32? in
-                guard case .bitmap = rendition.body else { return nil }
-                let appearanceKey = UInt32(rendition.appearance?.keyToken ?? 0) << 16
-                return UInt32(rendition.idiom.rawValueByte) | appearanceKey
+            // Icon rendition groups: n(n + 1) for the n idioms carrying a
+            // MultiSized container, whatever the appearances (democar2,
+            // iphone only: 2; cs1, tint, NNW and all 32 IceCubes sets,
+            // iphone + ipad, base-only or with dark and tinted: 6).
+            let idioms = Set(renditions.compactMap { rendition -> UInt16? in
+                guard case .multiSized = rendition.body else { return nil }
+                return rendition.idiom.rawValueByte
             }).count
-            let multiSized = renditions.filter {
-                if case .multiSized = $0.body { return true }
-                return false
-            }.count
-            renditionGroups = UInt32(bitmapGroups + multiSized)
+            renditionGroups = UInt32(idioms * (idioms + 1))
         }
 
         let idiomSubtypes = Set(renditions.map { rendition -> UInt32 in
@@ -256,7 +236,9 @@ enum BitmapKeys {
             idiomSubtypeCount: UInt32(idiomSubtypes.count),
             countOverride: countOverride,
             renditionGroups: renditionGroups,
-            keyTokenCount: keyTokenCount)
+            hasWideGamut: hasWideGamut,
+            keyFormat: keyFormat,
+            scaleMask: scaleMask)
     }
 
     /// AppIcon takes precedence over Vector takes precedence over Image:

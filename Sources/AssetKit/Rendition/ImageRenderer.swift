@@ -167,16 +167,21 @@ enum ImageRenderer {
                 continue
             }
             if file.appearance?.tintedLuminosity == true {
-                // Tinted variant: actool writes TWO renditions per idiom —
-                // 8-bit gray gamma 22 ('GA8 ', cs 2) and 16-bit extended
-                // gray ('GA16', cs 6, key display-gamut P3). No ARGB
-                // rendition exists for the tinted slot. The gray channel is
-                // the source's luma (verified: the NNW oracle's GA16 pixels
-                // equal src16/65535 as half floats; its tint source is
-                // neutral so luma coincides with every channel). actool
-                // dithers the 8-bit encoding; we round instead (the
-                // deviation is at most 1/255 on near-black pixels).
-                out.append(contentsOf: tintedRenditions(from: icon))
+                // Tinted variant. A neutral source (R = G = B) becomes TWO
+                // renditions per idiom: 8-bit gray gamma 22 ('GA8 ', cs 2)
+                // and 16-bit extended gray ('GA16', cs 6, key display-gamut
+                // P3); the gray channel is the source's luma (NNW oracle: its
+                // GA16 pixels equal src16/65535 as half floats). actool
+                // dithers the 8-bit encoding; we round instead (at most 1/255
+                // on near-black pixels). A colored source stays in color like
+                // the base variant: ARGB, plus ARGB-16 under the P3 rule
+                // (IceCubes Icon.appiconset oracle).
+                if case .bitmap(let body) = icon.body, body.pixelFormat == .bgra8,
+                   PNGSource.grayAlpha(premultipliedBGRA: body.pixelsBGRA) != nil {
+                    out.append(contentsOf: tintedRenditions(from: icon))
+                } else {
+                    out.append(icon)
+                }
                 continue
             }
             out.append(icon)

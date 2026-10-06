@@ -43,8 +43,9 @@ public enum PNGSource {
         // an RGBA source of black + alpha compiles to Encoding Gray, cs 2).
         // Tinted entries are skipped: they become gray through
         // ImageRenderer.tintedRenditions, which reads BGRA.
-        if decoded.extendedRGBA16 == nil, context.appearance?.tintedLuminosity != true,
-           let gray = grayAlpha(premultipliedBGRA: decoded.bgra8) {
+        let tinted = context.appearance?.tintedLuminosity == true
+        let colorless = grayAlpha(premultipliedBGRA: decoded.bgra8)
+        if decoded.extendedRGBA16 == nil, !tinted, let gray = colorless {
             body.pixelsBGRA = gray
             body.pixelFormat = .gray8
             body.colorSpaceID = 2
@@ -58,9 +59,9 @@ public enum PNGSource {
             body: .bitmap(body)
         )]
         // Display P3 sources get a second, wide-gamut rendition beside the
-        // 8-bit one (tinted entries excepted: they go through the gray
-        // conversion, which reads the 8-bit BGRA rendition).
-        if let wide = decoded.extendedRGBA16, context.appearance?.tintedLuminosity != true {
+        // 8-bit one. Neutral tinted entries are excepted: they become the
+        // GA8/GA16 pair through ImageRenderer.tintedRenditions.
+        if let wide = decoded.extendedRGBA16, !tinted || colorless == nil {
             out.append(Rendition(
                 name: context.assetName,
                 idiom: context.idiom,

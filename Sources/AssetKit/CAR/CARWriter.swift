@@ -46,7 +46,7 @@ struct CARWriter: Sendable {
         let appearanceData: [(key: Data, value: Data)] = AppearanceKeys.entries(used: layout.usedAppearances)
             .map { (key: $0.key, value: $0.value) }
             .sorted { BOMTree.byteCompare($0.key, $1.key) < 0 }
-        let bitmapData: [(key: Data, value: Data)] = bitmapEntries(layout: layout, keyTokenCount: keyFormat.count)
+        let bitmapData: [(key: Data, value: Data)] = bitmapEntries(layout: layout, keyFormat: keyFormat)
             .sorted { BOMTree.byteCompare($0.key, $1.key) < 0 }
 
         // ---- Deterministic block ids (1-based, actool order) ----
@@ -212,12 +212,12 @@ struct CARWriter: Sendable {
     /// BITMAPKEYS entries: inline u32 key = NameIdentifier (big-endian 4
     /// bytes), value = the 52/48-byte descriptor. Color-only assets produce
     /// no row.
-    private func bitmapEntries(layout: CARLayout, keyTokenCount: Int) -> [(key: Data, value: Data)] {
+    private func bitmapEntries(layout: CARLayout, keyFormat: [AttributeID]) -> [(key: Data, value: Data)] {
         layout.assets.compactMap { asset in
             guard let descriptor = BitmapKeys.descriptor(
                 forAsset: asset.name,
                 renditions: asset.renditions,
-                keyTokenCount: keyTokenCount
+                keyFormat: keyFormat
             ) else { return nil }
             let identifier = UInt32(FacetKeys.nameHash(asset.name) & 0xFFFF)
             return (key: Data([

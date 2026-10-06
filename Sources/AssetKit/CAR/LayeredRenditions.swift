@@ -101,14 +101,6 @@ struct IconImageStackBody: Sendable {
     /// CSI header name field: "<icon name>.iconstack" (oracle RenditionName).
     var csiName: String
 
-    /// What BITMAPKEYS records for the icon asset: Apple's descriptor slots
-    /// are [child expansion across appearances, 1, layer count]. Expansion =
-    /// the gradient (one) plus every group's three appearance variants
-    /// (IceCubes oracle: 1 + 2 groups x 3 = 7).
-    var bitmapKeysSlots: (expansion: UInt32, layerCount: UInt32) {
-        let groups = children.count - 1
-        return (expansion: UInt32(1 + 3 * max(0, groups)), layerCount: UInt32(children.count))
-    }
 }
 
 // MARK: - CSI writers

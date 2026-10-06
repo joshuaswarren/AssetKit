@@ -264,7 +264,7 @@ struct ColorSpaceTests {
                                    darkComponents: rgbComponents([0, 0, 0, 1]))
         let renditions = try ColorRenderer.renditions(for: set)
         let descriptor = try #require(BitmapKeys.descriptor(
-            forAsset: "Srgb", renditions: renditions, keyTokenCount: 8))
+            forAsset: "Srgb", renditions: renditions, keyFormat: baseKeyFormat))
         // actool 27.0 value for a universal light+dark colorset, verbatim.
         let encoded = descriptor.encode()
         if encoded != bytes("01000000000000002400000008000000ffffffff01000000020000000100000001000000ffffffffffffffffffffffff") {
