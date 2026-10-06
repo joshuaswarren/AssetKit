@@ -35,6 +35,7 @@ let package = Package(
             dependencies: [
                 "AssetKit",
                 "CLZFSE",
+                .product(name: "PNG", package: "swift-png"),
             ],
             resources: [
                 .copy("Fixtures"),

@@ -157,9 +157,9 @@ struct BitmapBody: Sendable {
         /// half-float pairs when this format is selected.
         case gray16
         /// 'RGBW' as an LE constant (file bytes W,B,G,R), colorSpace 4
-        /// (extended sRGB), 8 bytes/pixel (b, g, r, a half-floats, each
-        /// little-endian). The 16-bit rendition actool 27.0 emits beside the
-        /// 8-bit downconvert for 16-bit sources (IceCubes oracle: assetutil
+        /// (extended sRGB), 8 bytes/pixel (r, g, b, a half floats, each
+        /// little-endian). The wide-gamut rendition actool 27.0 emits beside
+        /// the 8-bit one for Display P3 sources (IceCubes oracle: assetutil
         /// Encoding 'ARGB-16', DisplayGamut P3).
         case argb16
 

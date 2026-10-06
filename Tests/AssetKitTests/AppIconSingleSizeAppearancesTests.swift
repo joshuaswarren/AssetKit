@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import AssetKit
+import PNG
 
 /// Pins the universal single-size app icon WITH dark and tinted appearance
 /// variants against Apple's actool 27.0 output for the NetNewsWire catalog
@@ -273,6 +274,32 @@ struct AppIconSingleSizeAppearancesTests {
         for r in colored {
             if case .bitmap(let b) = r.body { #expect(b.pixelFormat == .bgra8) }
         }
+    }
+
+    @Test("Display P3 pixels convert to extended-sRGB RGBA half floats")
+    func displayP3Extended() {
+        // IceCubes blue_alt2.png (8-bit, kCGColorSpaceDisplayP3), first pixel
+        // (86, 113, 222): Apple's car stores (0.3074, 0.4468, 0.8999, 1.0).
+        let px = PNG.RGBA<UInt16>(86 * 257, 113 * 257, 222 * 257, 65535)
+        let converted = PNGSource.extendedSRGB([px])
+        let bytes = converted.pixels
+        // In gamut: no wide rendition. Pure P3 green leaves sRGB.
+        #expect(!converted.leavesSRGB)
+        #expect(PNGSource.extendedSRGB([PNG.RGBA<UInt16>(0, 65535, 0, 65535)]).leavesSRGB)
+        let halves = stride(from: 0, to: 8, by: 2).map { UInt16(bytes[$0]) | UInt16(bytes[$0 + 1]) << 8 }
+        // Within one half-float ULP per channel: Apple converts through the
+        // embedded ICC tables, we through the standard P3-to-sRGB matrix.
+        let apple: [UInt16] = [0x34EB, 0x3726, 0x3B33, 0x3C00]
+        for (ours, theirs) in zip(halves, apple) {
+            #expect(abs(Int(ours) - Int(theirs)) <= 1)
+        }
+        #expect(PNGSource.halfFloat(1) == 0x3C00)
+        #expect(PNGSource.halfFloat(-2) == 0xC000)
+        #expect(PNGSource.halfFloat(0.5) == 0x3800)
+        #expect(PNGSource.halfFloat(100_000) == 0x7BFF)
+        #expect(PNGSource.isDisplayP3(PNG.ColorProfile(name: "kCGColorSpaceDisplayP3", profile: [])))
+        #expect(!PNGSource.isDisplayP3(PNG.ColorProfile(name: "sRGB IEC61966-2.1", profile: [])))
+        #expect(!PNGSource.isDisplayP3(nil))
     }
 
     @Test("isOpaque reads the alpha channel of every pixel format")
