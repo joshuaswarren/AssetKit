@@ -508,7 +508,7 @@ public enum IconComposerCompiler {
         for appearance in appearances {
             let pixels = render(model: model, images: images, appearance: appearance)
             if appearance == nil { lightPixels = pixels }
-            let renditionTag = renditionUUIDTag()
+            let renditionTag = renditionUUIDTag(name: input.name, appearance: appearance, pixels: pixels)
             for idiom in idioms {
                 iconRenditions.append(Rendition(
                     name: input.name, idiom: idiom, scale: .x1,
@@ -613,13 +613,24 @@ public enum IconComposerCompiler {
         }
     }
 
-    /// The RenditionName suffix Apple appends: a per-compile UUID, a process
-    /// id and a monotonic counter. Values differ per compile by design; the
-    /// shape matches the oracle's.
-    static func renditionUUIDTag() -> String {
-        let pid = ProcessInfo.processInfo.processIdentifier
-        let counter = UInt64(Date().timeIntervalSince1970 * 1000)
-        return "\(UUID().uuidString)-\(pid)-\(String(format: "%016llX", counter))"
+    /// The RenditionName suffix in Apple's shape: UUID, process id, 64-bit
+    /// counter. actool fills it with a fresh UUID, its pid and a clock value,
+    /// so its own cars differ per compile (IceCubes oracle runs: pids 53704
+    /// and 53930). We derive all three from the content instead, so the same
+    /// inputs give a byte-identical car.
+    static func renditionUUIDTag(name: String, appearance: Appearance?, pixels: [UInt8]) -> String {
+        func fnv1a(_ seed: UInt64) -> UInt64 {
+            var h: UInt64 = 0xCBF2_9CE4_8422_2325 ^ seed
+            for byte in name.utf8 { h = (h ^ UInt64(byte)) &* 0x100_0000_01B3 }
+            for byte in appearanceNameTag(appearance).utf8 { h = (h ^ UInt64(byte)) &* 0x100_0000_01B3 }
+            for byte in pixels { h = (h ^ UInt64(byte)) &* 0x100_0000_01B3 }
+            return h
+        }
+        let a = fnv1a(1), b = fnv1a(2), c = fnv1a(3)
+        let hex = String(format: "%016llX%016llX", a, b)
+        let chars = Array(hex)
+        let uuid = [0..<8, 8..<12, 12..<16, 16..<20, 20..<32].map { String(chars[$0]) }.joined(separator: "-")
+        return "\(uuid)-\(10000 + c % 90000)-\(String(format: "%016llX", c >> 8))"
     }
 
     /// Premultiplied BGRA bytes for a decoded layer image (PNGSource's
