@@ -138,9 +138,13 @@ public struct XCAssetCompiler: Sendable {
         for colorSet in loaded.colorSets {
             renditions.append(contentsOf: try ColorRenderer.renditions(for: colorSet))
         }
+        // Sequential on purpose: sprite rasterization feeds the atlas shelf
+        // order, which is part of the byte-stable output.
+        var preparedSymbols: [SymbolRenderer.PreparedSymbolSet] = []
         for symbolSet in loaded.symbolSets {
-            renditions.append(contentsOf: try SymbolRenderer.renditions(for: symbolSet, svgRasterizer: svgRasterizer))
+            preparedSymbols.append(try SymbolRenderer.prepare(for: symbolSet, svgRasterizer: svgRasterizer))
         }
+        renditions.append(contentsOf: SymbolRenderer.renditions(for: preparedSymbols))
 
         var appIconBundle: AppIconBundle?
         if let iconComposer {
