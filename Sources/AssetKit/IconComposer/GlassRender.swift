@@ -500,7 +500,9 @@ enum GlassRender {
                 for x in 0..<n { canvas.r[y * n + x] = r; canvas.g[y * n + x] = g; canvas.b[y * n + x] = b }
             }
         }
-        let glassAlphas: (Float, Float, Float) = appearance == nil || appearance == .light ? (0.03, 0.04, 0.2) : (0.03, 0.08, 0.3)
+        // system-light records 0.04/0.2. Custom light and dark record 0.08/0.3 (icr-alt1/010).
+        let systemLight = fillForRim == C.presetFill("system-light")
+        let glassAlphas: (Float, Float, Float) = systemLight ? (0.03, 0.04, 0.2) : (0.03, 0.08, 0.3)
         var covered = [Float](repeating: 1, count: count)
         for group in model.groups.reversed() {
             var content = Image()
