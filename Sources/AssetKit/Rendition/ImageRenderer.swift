@@ -99,6 +99,11 @@ enum ImageRenderer {
     }
 
     static func appIconRenditions(for appIcon: LoadedAppIcon, files: [IconFile]) throws -> [Rendition] {
+        // Apple's macosx car keys every app-icon rendition universal —
+        // assetutil shows no Idiom facet on the Icon renditions and
+        // "idiom:universal" inside the MultiSized container (NNW Mac oracle).
+        // iPhone/iPad keep their per-idiom keys (iOS oracles).
+        let keyIdiom = { (idiom: Idiom) in idiom == .mac ? .universal : idiom }
         // Decode each source once, keeping its IconFile for index assignment.
         var decoded: [(file: IconFile, rendition: Rendition)] = []
         for file in files {
@@ -122,7 +127,7 @@ enum ImageRenderer {
             // because actool uses the filename (not the asset name) here.
             let ctx = PNGSource.Context(
                 assetName: appIcon.name,
-                idiom: file.idiom,
+                idiom: keyIdiom(file.idiom),
                 scale: scale,
                 appearance: file.appearance,
                 gamut: .sRGB,
@@ -186,7 +191,7 @@ enum ImageRenderer {
             }
             out.append(icon)
             addMultiSizedEntry(
-                &groups, idiom: file.idiom, subtype: 0,
+                &groups, idiom: keyIdiom(file.idiom), subtype: 0,
                 pointSize: UInt32(file.pointSize), index: UInt32(icon.iconIndex!)
             )
             if file.idiom == .iphone, file.pointSize == 60, file.scale == 3 {

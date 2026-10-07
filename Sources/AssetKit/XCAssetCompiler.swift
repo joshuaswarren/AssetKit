@@ -159,20 +159,36 @@ public struct XCAssetCompiler: Sendable {
         } else if let appIcon = loaded.appIcon(named: appIconName) {
             let plist = try AppIconPlistEmitter.emit(appIcon)
             renditions.append(contentsOf: try ImageRenderer.appIconRenditions(for: appIcon, files: plist.iconFiles))
+            if platform == "macosx" {
+                // Apple's macosx partial plist is two flat keys, and the icns
+                // is the only loose file (oracle: actool 27.0 on the NNW Mac
+                // AppIcon; Calculator/1Password ship the same icns shape).
+                appIconBundle = AppIconBundle(
+                    primaryIconName: appIcon.name,
+                    infoPlistAdditions: [
+                        "CFBundleIconFile": appIcon.name,
+                        "CFBundleIconName": appIcon.name,
+                    ] as [String: any Sendable],
+                    looseFiles: [LooseFile(
+                        name: "\(appIcon.name).icns",
+                        data: try IcnsWriter.write(appIcon)
+                    )]
+                )
+            } else {
+                var looseFiles: [LooseFile] = []
+                for file in plist.iconFiles {
+                    let suffix = file.scale == 1 ? "" : "@\(file.scale)x"
+                    let target = "\(file.outputName)\(suffix).png"
+                    let data = try Data(contentsOf: file.sourceURL)
+                    looseFiles.append(LooseFile(name: target, data: data))
+                }
 
-            var looseFiles: [LooseFile] = []
-            for file in plist.iconFiles {
-                let suffix = file.scale == 1 ? "" : "@\(file.scale)x"
-                let target = "\(file.outputName)\(suffix).png"
-                let data = try Data(contentsOf: file.sourceURL)
-                looseFiles.append(LooseFile(name: target, data: data))
+                appIconBundle = AppIconBundle(
+                    primaryIconName: plist.iconName,
+                    infoPlistAdditions: plist.infoPlistAdditions,
+                    looseFiles: looseFiles
+                )
             }
-
-            appIconBundle = AppIconBundle(
-                primaryIconName: plist.iconName,
-                infoPlistAdditions: plist.infoPlistAdditions,
-                looseFiles: looseFiles
-            )
         }
 
         var alternates = loaded.alternateAppIcons(primary: appIconName).map(\.name)
