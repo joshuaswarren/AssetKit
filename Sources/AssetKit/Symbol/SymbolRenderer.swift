@@ -60,8 +60,10 @@ enum SymbolRenderer {
             repeating: (0, 0), count: dims.count)
         var rowHeight: UInt32 = 0
         var maxHeight: UInt32 = 0
+        var maxRowWidth: UInt32 = 0
         for i in order {
             if x > pad, x + dims[i].width > maxAtlasShelfWidth {
+                maxRowWidth = max(maxRowWidth, x)
                 y += rowHeight + pad
                 x = pad
                 rowHeight = 0
@@ -71,7 +73,7 @@ enum SymbolRenderer {
             rowHeight = max(rowHeight, dims[i].height)
             maxHeight = max(maxHeight, y + rowHeight)
         }
-        return (placements, x, maxHeight + pad)
+        return (placements, max(maxRowWidth, x), maxHeight + pad)
     }
 
     /// One `.symbolset` prepared for atlas assembly: the set's vector
