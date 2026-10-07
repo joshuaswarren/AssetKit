@@ -26,7 +26,8 @@ enum IcnsWriter {
     }
 
     static func write(_ appIcon: LoadedAppIcon) throws -> Data {
-        var body = Data([0x69, 0x63, 0x6e, 0x73]) // 'icns', length patched below
+        // 8-byte header: 'icns' + total length (patched below).
+        var body = Data([0x69, 0x63, 0x6e, 0x73, 0, 0, 0, 0])
         for (type, pointSize, scale) in [("ic04", 16.0, Scale.x1), ("ic07", 128.0, Scale.x1),
                                          ("ic11", 16.0, Scale.x2), ("ic13", 128.0, Scale.x2)] {
             func entry(where idiom: Idiom?) -> AppIconContents.Image? {
