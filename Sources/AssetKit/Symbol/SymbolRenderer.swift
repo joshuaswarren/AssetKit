@@ -32,11 +32,21 @@ enum SymbolRenderer {
     /// (0x3FBE2FFA, 0x3F94C000).
     static let leftMarginPoints = Float(bitPattern: 0x3FBE2FFA)
     static let rightMarginPoints = Float(bitPattern: 0x3F94C000)
-    /// Atlas layout for the cached bitmaps of one scale: one shelf, widest
-    /// first, 2 px padding — Apple's observed single-symbol symbol atlas
-    /// shape (60x34, 112x64, 164x94 in the full-NNW oracle), whose
-    /// placements (2,2)/(24,2)/(43,2)... it reproduces exactly. Ties break
-    /// by input index so the layout is deterministic.
+    /// Largest atlas dimension App Store processing accepted in this
+    /// program: 2078x442 (the per-set IceCubes atlases of 54834467 and
+    /// dbad43f2). A 4454x442 single-shelf atlas (upload eb830d06) stayed in
+    /// PROCESSING for hours while the same catalog in per-set atlases
+    /// processed in minutes, so shelves wrap before reaching 2048 px.
+    static let maxAtlasShelfWidth: UInt32 = 2048
+
+    /// Atlas layout for the cached bitmaps of one scale: shelves widest
+    /// first with 2 px padding, wrapping to a new row at
+    /// `maxAtlasShelfWidth` — Apple's atlases are multi-row (the IceCubes
+    /// 2-set 1x atlas places six sprites in two shelves, 62x44), and the
+    /// single-shelf width of a whole catalog overflows the size processing
+    /// accepts. The full-NNW single-set shape (60x34, placements
+    /// (2,2)/(24,2)/(43,2)...) is unchanged: one shelf, widest first. Ties
+    /// break by input index so the layout is deterministic.
     static func atlasLayout(dims: [(width: UInt32, height: UInt32)])
         -> (placements: [(x: UInt32, y: UInt32)], atlasWidth: UInt32, atlasHeight: UInt32)
     {
@@ -45,15 +55,23 @@ enum SymbolRenderer {
             (dims[$0].width, $0) > (dims[$1].width, $1)
         }
         var x = pad
+        var y = pad
         var placements = [(x: UInt32, y: UInt32)](
             repeating: (0, 0), count: dims.count)
+        var rowHeight: UInt32 = 0
         var maxHeight: UInt32 = 0
         for i in order {
-            placements[i] = (x, pad)
+            if x > pad, x + dims[i].width > maxAtlasShelfWidth {
+                y += rowHeight + pad
+                x = pad
+                rowHeight = 0
+            }
+            placements[i] = (x, y)
             x += dims[i].width + pad
-            maxHeight = max(maxHeight, dims[i].height)
+            rowHeight = max(rowHeight, dims[i].height)
+            maxHeight = max(maxHeight, y + rowHeight)
         }
-        return (placements, x, maxHeight + 2 * pad)
+        return (placements, x, maxHeight + pad)
     }
 
     /// One `.symbolset` prepared for atlas assembly: the set's vector
