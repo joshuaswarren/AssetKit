@@ -181,19 +181,18 @@ enum SymbolRenderer {
     }
 
     /// Renditions for every `.symbolset` in the catalog. Apple packs the
-    /// cached bitmaps into ONE ZZZZPackedAsset atlas per scale for the whole
-    /// catalog (NNW oracle: one atlas per scale); CoreUI resolves the packed
-    /// key (element 9, part 181, identifier 0) to the first rendition in the
-    /// car, so per-set atlases under the same key left every sprite of the
-    /// other sets out of bounds whenever a narrower atlas came first — the
-    /// sorted catalog walk of 98ff033 flipped IceCubes into exactly that
-    /// order and App Store processing never finished (upload f3a1784f; the
-    /// same car with the pair order swapped went VALID).
+    /// cached bitmaps into ONE ZZZZPackedAsset atlas per scale for the
+    /// whole catalog (NNW oracle: one atlas per scale), and its car order
+    /// puts the atlas first inside each scale group ([atlas, vectors,
+    /// cached] at 1x, [atlas, cached] at 2x/3x). CoreUI resolves the packed
+    /// key (element 9, part 181, identifier 0) to the first rendition in
+    /// the car, so per-set atlases under the same key left every sprite of
+    /// the other sets out of bounds whenever a narrower atlas came first —
+    /// the sorted catalog walk of 98ff033 flipped IceCubes into exactly
+    /// that order and App Store processing never finished (upload f3a1784f;
+    /// the same car with the pair order swapped went VALID).
     static func renditions(for sets: [PreparedSymbolSet]) -> [Rendition] {
         var out: [Rendition] = []
-        for prepared in sets {
-            out.append(contentsOf: prepared.vectors)
-        }
         let scaleNames = [1: Scale.x1, 2: Scale.x2, 3: Scale.x3]
         for (factorIndex, factor) in [1, 2, 3].enumerated() {
             // One shelf across every set's sprites at this scale.
@@ -220,6 +219,26 @@ enum SymbolRenderer {
                     }
                 }
             }
+            // Apple's car order inside each scale group: the atlas first.
+            let packed = SymbolPackedBody(
+                width: layout.atlasWidth,
+                height: layout.atlasHeight,
+                pixelsGA: atlas,
+                scale: UInt16(factor),
+                renditionName: "ZZZZPackedAsset-\(factor).0.1-gamut0"
+            )
+            out.append(Rendition(
+                name: packed.renditionName,
+                idiom: .universal,
+                scale: scaleNames[factor]!,
+                deploymentTarget: deploymentTargetToken,
+                body: .symbolPacked(packed)
+            ))
+            if factor == 1 {
+                for prepared in sets {
+                    out.append(contentsOf: prepared.vectors)
+                }
+            }
             for (index, sprite) in dims.enumerated() {
                 let set = sets[sprite.setIndex]
                 let cached = SymbolCachedBody(
@@ -241,20 +260,6 @@ enum SymbolRenderer {
                     body: .symbolCached(cached)
                 ))
             }
-            let packed = SymbolPackedBody(
-                width: layout.atlasWidth,
-                height: layout.atlasHeight,
-                pixelsGA: atlas,
-                scale: UInt16(factor),
-                renditionName: "ZZZZPackedAsset-\(factor).0.1-gamut0"
-            )
-            out.append(Rendition(
-                name: packed.renditionName,
-                idiom: .universal,
-                scale: scaleNames[factor]!,
-                deploymentTarget: deploymentTargetToken,
-                body: .symbolPacked(packed)
-            ))
         }
         return out
     }
