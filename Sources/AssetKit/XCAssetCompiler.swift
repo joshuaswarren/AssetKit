@@ -90,14 +90,21 @@ public struct XCAssetCompiler: Sendable {
     /// `HeifConvertDecoder`, which shells out to libheif's `heif-convert`.
     /// Replace when you need a different decoder.
     public var heicDecoder: any HEICDecoder
+    /// The actool `--platform` value. Only `macosx` changes the output
+    /// schema (the macOS CoreUI rendition-key layout); every other value,
+    /// including the default `iphoneos`, compiles byte-identically to the
+    /// previous releases.
+    public var platform: String
 
     public init(
         deploymentTarget: String,
+        platform: String = "iphoneos",
         svgRasterizer: any SVGRasterizer = RsvgConvertRasterizer(),
         pdfRasterizer: any PDFRasterizer = PdftoCairoRasterizer(),
         heicDecoder: any HEICDecoder = HeifConvertDecoder()
     ) {
         self.deploymentTarget = deploymentTarget
+        self.platform = platform
         self.svgRasterizer = svgRasterizer
         self.pdfRasterizer = pdfRasterizer
         self.heicDecoder = heicDecoder
@@ -184,7 +191,9 @@ public struct XCAssetCompiler: Sendable {
         }
         appIconBundle?.alternateIconNames = alternates.sorted()
 
-        let writer = CARWriter(deploymentTarget: deploymentTarget, renditions: renditions)
+        let writer = CARWriter(
+            deploymentTarget: deploymentTarget, renditions: renditions,
+            macSchema: platform == "macosx")
         let bytes = try writer.write()
 
         return CompileResult(carData: bytes, renditionCount: renditions.count, appIconBundle: appIconBundle)

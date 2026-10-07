@@ -126,10 +126,20 @@ enum BitmapKeys {
                 // 14t [1, 1, 0x10, 4, 7, 1, 0x20, 1]. The 0x20 lands at
                 // index keyTokenCount/2 - 1 in both; other slots after
                 // the shared five-value prefix are 1.
-                template = [1, 1, 0x10, 4, 7]
-                template += [UInt32](repeating: 1, count: max(0, slots - 5))
-                if slots > 0 {
-                    template[max(0, keyTokenCount / 2 - 1)] = 0x20
+                //
+                // macSchema (dimension1 in KEYFORMAT, 13 tokens) follows
+                // actool 27.0's NNW Mac oracle instead: the marker value
+                // 0x0e joins the prefix and 0x20 closes the payload —
+                // [1, 1, 0x10, 14, 7, 1, 0x20]. macOS 26 CoreUI rejects
+                // the 12t shape (no named lookup resolves).
+                if keyFormat.contains(.dimension1) {
+                    template = [1, 1, 0x10, 0x0e, 7, 1, 0x20]
+                } else {
+                    template = [1, 1, 0x10, 4, 7]
+                    template += [UInt32](repeating: 1, count: max(0, slots - 5))
+                    if slots > 0 {
+                        template[max(0, keyTokenCount / 2 - 1)] = 0x20
+                    }
                 }
             }
             if hasWideGamut, kind != .symbol, kind != .appIcon {

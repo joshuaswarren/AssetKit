@@ -85,7 +85,16 @@ enum KeyFormat {
     /// P3), and `appearance` when any rendition has a named appearance.
     /// Verified: the NNW oracle car keys its dark/tinted renditions through
     /// exactly these slots.
-    static func format(for renditions: [Rendition]) -> [AttributeID] {
+    ///
+    /// `macSchema: true` adds `dimension1` at its canonical rank: actool
+    /// 27.0 compiled NetNewsWire's Mac catalog to a 13-attribute KEYFORMAT
+    /// [7, 13, 12, 15, 16, 26, 27, 9, 8, 25, 17, 1, 2] — the canonical
+    /// order minus `displayGamut` — for both `--platform macosx` and
+    /// `--platform iphoneos`. macOS 26 CoreUI resolves no rendition at all
+    /// from a Mac car in the 12-attribute iOS schema (`Bundle.image(forRe
+    /// source:)` returns nil for every name), so the mac build must carry
+    /// the extra token.
+    static func format(for renditions: [Rendition], macSchema: Bool = false) -> [AttributeID] {
         let usesIconIndex = renditions.contains { rendition in
             if case .bitmap(let body) = rendition.body, body.kind == .appIcon {
                 return true
@@ -109,6 +118,7 @@ enum KeyFormat {
         if usesIconIndex { used.insert(.dimension2) }
         if usesAppearance { used.insert(.appearance) }
         if usesGamut { used.insert(.displayGamut) }
+        if macSchema { used.insert(.dimension1) }
         // Symbol renditions widen the tuple with their weight, size, and
         // deployment-target slots (Apple symbol oracle: a symbol-only
         // catalog keys 12 attributes; the full NNW catalog 14 once the

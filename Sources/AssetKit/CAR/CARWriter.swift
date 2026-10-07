@@ -24,6 +24,10 @@ import Foundation
 struct CARWriter: Sendable {
     var deploymentTarget: String
     var renditions: [Rendition]
+    /// True for `--platform macosx` compilations: widens KEYFORMAT and the
+    /// BITMAPKEYS descriptors with the `dimension1` attribute (macOS 26
+    /// CoreUI resolves nothing from a car in the iOS 12-attribute schema).
+    var macSchema = false
 
     func write() throws -> Data {
         var bom = BOMWriter()
@@ -34,7 +38,7 @@ struct CARWriter: Sendable {
         // use: the base eight, plus dimension2 when some rendition carries
         // an Icon Index (app icons), plus appearance / displayGamut when
         // dark or tinted icon variants widen the tuple.
-        let keyFormat = KeyFormat.format(for: renditions)
+        let keyFormat = KeyFormat.format(for: renditions, macSchema: macSchema)
 
         // ---- Tree contents ----
         let renditionData: [(key: Data, value: Data)] = renditions.map { rendition in
