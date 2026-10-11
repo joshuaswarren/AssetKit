@@ -96,7 +96,7 @@ enum ImageRenderer {
         }
 
         // "Icon Index" = the rank of the rendition's point size among the
-        // appiconset's distinct point sizes, ascending — shared across idioms
+        // appiconset's distinct point sizes, ascending; shared across idioms
         // and scales (60 pt @2x and @3x are both index 1; an ipad 20 pt and
         // an iphone 20 pt are also both index 1). Both oracle runs agree.
         //

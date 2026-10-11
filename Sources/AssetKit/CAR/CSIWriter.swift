@@ -115,7 +115,7 @@ enum CSIWriter {
     /// MultiSized icon container (layout 1010). Header dimensions, scale,
     /// pixelFormat and colorSpace are all zero like named colors; TVL is the
     /// same all-zero 1004 + 1006:1 pair. The name is the ASSET name (not a
-    /// source filename), and the body lists point sizes — 83.5 pt truncates
+    /// source filename), and the body lists point sizes; 83.5 pt truncates
     /// to 83, as in the reference output.
     static func multiSized(name: String, body: MultiSizedBody) -> Data {
         let tvl = CSITVL.encode([.colorSlice, .bitmapFlag])

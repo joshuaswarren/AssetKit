@@ -14,7 +14,7 @@ struct Rendition: Sendable {
     var appearance: Appearance?
     var gamut: Gamut?
     /// Raw rendition-key subtype token. Non-zero only for icon variants
-    /// keyed on a device trait — actool keys the 90 pt large-phone home icon
+    /// keyed on a device trait; actool keys the 90 pt large-phone home icon
     /// (derived from the 60 pt @3x slot) at subtype 1792.
     var subtype: UInt16? = nil
     /// App-icon "Icon Index": the rank of this rendition's point size among
@@ -72,7 +72,7 @@ struct BitmapBody: Sendable {
 }
 
 struct ColorBody: Sendable {
-    /// Components in the color space's own order — RGB spaces carry 4
+    /// Components in the color space's own order; RGB spaces carry 4
     /// (r, g, b, a), gray spaces carry 2 (white, alpha). actool quantizes
     /// each to Float32 before storing it in the COLR body's Float64 slots
     /// (verified: Xcode 27.0 writes 1.1 as 0x3FF19999A0000000).

@@ -29,8 +29,8 @@ struct RenditionKey: Hashable, Sendable {
     enum Part: UInt16 {
         /// Used by SpringBoard's icon-render pipeline (`.appiconset`).
         case appIcon = 220
-        /// Named colors (`.colorset`). actool keys every color rendition —
-        /// system references included — at element 85 / part 217.
+        /// Named colors (`.colorset`). actool keys every color rendition,
+        /// system references included, at element 85 / part 217.
         case color = 217
         /// MultiSized icon container (CSI layout 1010, 'MSIS' body). actool
         /// emits one per (idiom, subtype) group of icon renditions; CoreUI

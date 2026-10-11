@@ -53,7 +53,7 @@ struct CARLayout {
             case .image: return .image
             }
         case .color: return .color
-        // MultiSized containers share the appicon facet — they are part of
+        // MultiSized containers share the appicon facet; they are part of
         // the same asset and only ever accompany .appIcon bitmap renditions,
         // which classify the facet first anyway.
         case .multiSized: return .appIcon

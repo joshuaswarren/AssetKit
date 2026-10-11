@@ -81,7 +81,7 @@ enum BitmapKeys {
                 w.writeLE(UInt32(1))
             case .color:
                 // Colorsets end the variable section after the (u16, u16)
-                // pair — no trailing u32 (48-byte descriptor, actool 27.0
+                // pair: no trailing u32 (48-byte descriptor, actool 27.0
                 // per-space oracle).
                 w.writeLE(UInt16(1))
                 w.writeLE(UInt16(0))
