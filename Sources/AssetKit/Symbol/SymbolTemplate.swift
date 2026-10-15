@@ -36,6 +36,10 @@ public enum SymbolTemplate {
     struct Layer {
         /// 1 Small, 2 Medium, 3 Large — from the `-S`/`-M`/`-L` suffix.
         var sizeClass: Int
+        /// Glyph-weight key token from the layer id prefix (`Regular-S` is
+        /// 4, `Ultralight-S` 1, `Black-S` 9): the weight's rank in actool's
+        /// list. Layers of one size class differ only by this token.
+        var weight: UInt16
         var children: [Node]
         /// The layer group's own translate (dropped in the rewrite but
         /// needed to place the drawing relative to the guides).
@@ -69,6 +73,13 @@ public enum SymbolTemplate {
         }
     }
 
+    /// Layer-id weight prefix to glyph-weight key token (Apple's IceCubes
+    /// rocket oracle keys Ultralight 1, Regular 4, Black 9).
+    static let weightTokens: [String: UInt16] = [
+        "Ultralight": 1, "Thin": 2, "Light": 3, "Regular": 4, "Medium": 5,
+        "Semibold": 6, "Bold": 7, "Heavy": 8, "Black": 9,
+    ]
+
     // MARK: Parsing
 
     static func parse(_ data: Data, asset: String, filename: String) throws -> Parsed {
@@ -82,7 +93,8 @@ public enum SymbolTemplate {
             throw SymbolError.noSymbolsGroup(asset: asset)
         }
         let layers = symbols.children.compactMap { node -> Layer? in
-            guard let id = node.id else { return nil }
+            guard let id = node.id, let separator = id.lastIndex(of: "-"),
+                  let weight = weightTokens[String(id[..<separator])] else { return nil }
             let sizeClass: Int
             switch id.last {
             case "S": sizeClass = 1
@@ -92,6 +104,7 @@ public enum SymbolTemplate {
             }
             return Layer(
                 sizeClass: sizeClass,
+                weight: weight,
                 children: node.children,
                 translation: node.translation ?? (0, 0)
             )
@@ -280,21 +293,127 @@ public enum SymbolTemplate {
         return b
     }
 
-    /// Coordinate pairs from a path's `d`, in document order. Absolute
-    /// commands with comma/space separators cover the symbol templates.
+    /// Every on-curve and control point of a path's `d`, in absolute user
+    /// units. Relative commands (Inkscape and other editors write them)
+    /// accumulate from the current point. Control points count: actool's
+    /// vector viewBox of the IceCubes rocket (Ultralight, Regular, Black
+    /// layers) equals the bounds of all path points to four decimals, and
+    /// the on-curve extrema alone come out smaller. An arc contributes its
+    /// end point and the extreme points of its ellipse that lie inside the sweep.
     private static func pathPoints(_ d: String) -> [(Double, Double)] {
         let tokens = tokenizePathData(d)
         var points: [(Double, Double)] = []
+        var x = 0.0, y = 0.0, startX = 0.0, startY = 0.0
+        var command: Character = "M"
         var i = 0
-        while i + 1 < tokens.count {
-            if case .number(let x) = tokens[i], case .number(let y) = tokens[i + 1] {
-                points.append((x, y))
-                i += 2
-            } else {
+        while i < tokens.count {
+            if case .command(let c) = tokens[i] {
+                command = c
                 i += 1
+                if c == "Z" || c == "z" {
+                    x = startX
+                    y = startY
+                    continue
+                }
+            }
+            let count: Int
+            switch command {
+            case "M", "m", "L", "l", "T", "t": count = 2
+            case "H", "h", "V", "v": count = 1
+            case "C", "c": count = 6
+            case "S", "s", "Q", "q": count = 4
+            case "A", "a": count = 7
+            default:
+                i += 1
+                continue
+            }
+            var values: [Double] = []
+            while i < tokens.count, values.count < count, case .number(let v) = tokens[i] {
+                values.append(v)
+                i += 1
+            }
+            guard values.count == count else { continue }
+            let relative = command.isLowercase
+            let ox = relative ? x : 0
+            let oy = relative ? y : 0
+            switch command.uppercased() {
+            case "H":
+                x = ox + values[0]
+            case "V":
+                y = oy + values[0]
+            case "A":
+                let endX = ox + values[5]
+                let endY = oy + values[6]
+                points.append(contentsOf: arcExtrema(
+                    fromX: x, fromY: y, radiusX: values[0], radiusY: values[1], rotation: values[2],
+                    largeArc: values[3] != 0, sweep: values[4] != 0, toX: endX, toY: endY))
+                x = endX
+                y = endY
+            default:
+                for k in stride(from: 0, to: count - 2, by: 2) {
+                    points.append((ox + values[k], oy + values[k + 1]))
+                }
+                x = ox + values[count - 2]
+                y = oy + values[count - 1]
+            }
+            points.append((x, y))
+            if command == "M" || command == "m" {
+                startX = x
+                startY = y
+                command = relative ? "l" : "L"
             }
         }
         return points
+    }
+
+    /// The points of an SVG elliptical arc where x or y is extreme and that
+    /// lie inside the sweep (SVG 1.1 F.6.5 end-point to center conversion).
+    /// Degenerate arcs (equal end points, a zero radius) add nothing; their
+    /// end point is the caller's.
+    static func arcExtrema(
+        fromX x1: Double, fromY y1: Double, radiusX: Double, radiusY: Double, rotation: Double,
+        largeArc: Bool, sweep: Bool, toX x2: Double, toY y2: Double
+    ) -> [(Double, Double)] {
+        var rx = abs(radiusX), ry = abs(radiusY)
+        guard rx > 0, ry > 0, x1 != x2 || y1 != y2 else { return [] }
+        let phi = rotation * .pi / 180
+        let cosPhi = cos(phi), sinPhi = sin(phi)
+        let dx = (x1 - x2) / 2, dy = (y1 - y2) / 2
+        let x1p = cosPhi * dx + sinPhi * dy
+        let y1p = -sinPhi * dx + cosPhi * dy
+        let lambda = x1p * x1p / (rx * rx) + y1p * y1p / (ry * ry)
+        if lambda > 1 {
+            rx *= lambda.squareRoot()
+            ry *= lambda.squareRoot()
+        }
+        let numerator = rx * rx * ry * ry - rx * rx * y1p * y1p - ry * ry * x1p * x1p
+        let denominator = rx * rx * y1p * y1p + ry * ry * x1p * x1p
+        let coefficient = (largeArc == sweep ? -1.0 : 1.0) * (max(0, numerator / denominator)).squareRoot()
+        let cxp = coefficient * rx * y1p / ry
+        let cyp = -coefficient * ry * x1p / rx
+        let cx = cosPhi * cxp - sinPhi * cyp + (x1 + x2) / 2
+        let cy = sinPhi * cxp + cosPhi * cyp + (y1 + y2) / 2
+        let start = atan2((y1p - cyp) / ry, (x1p - cxp) / rx)
+        var delta = atan2((-y1p - cyp) / ry, (-x1p - cxp) / rx) - start
+        if !sweep, delta > 0 { delta -= 2 * .pi }
+        if sweep, delta < 0 { delta += 2 * .pi }
+        // x(t) = cx + rx cos(phi) cos t - ry sin(phi) sin t, y(t) = cy + rx sin(phi) cos t + ry cos(phi) sin t.
+        // dx/dt = 0 at t = atan2(-ry sin(phi), rx cos(phi)) + k pi; dy/dt = 0 at atan2(ry cos(phi), rx sin(phi)) + k pi.
+        let base = [atan2(-ry * sinPhi, rx * cosPhi), atan2(ry * cosPhi, rx * sinPhi)]
+        var out: [(Double, Double)] = []
+        for t0 in base {
+            for k in 0..<2 {
+                let t = t0 + Double(k) * .pi
+                // Offset of t from the arc start in the sweep direction, in [0, 2 pi).
+                var offset = sweep ? t - start : start - t
+                offset = offset.truncatingRemainder(dividingBy: 2 * .pi)
+                if offset < 0 { offset += 2 * .pi }
+                guard offset <= abs(delta) else { continue }
+                out.append((cx + rx * cosPhi * cos(t) - ry * sinPhi * sin(t),
+                            cy + rx * sinPhi * cos(t) + ry * cosPhi * sin(t)))
+            }
+        }
+        return out
     }
 
     private enum PathToken {

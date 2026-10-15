@@ -1,21 +1,19 @@
 import Foundation
 
-/// Builds the renditions actool emits for one `.symbolset` (Apple symbol
-/// oracle: Xcode 27.0 on NetNewsWire's markAllAsRead and markAboveAsRead):
+/// Builds the renditions actool emits for a catalog's `.symbolset`s (Apple
+/// symbol oracle: Xcode 27.0 on NetNewsWire's markAllAsRead and
+/// markAboveAsRead):
 ///
-/// * one vector-glyph rendition (part 59) per -S/-M/-L template layer,
-///   keyed weight Regular (4) and the layer's size class;
-/// * nine cached-bitmap renditions (part 181) keyed Glyph Cached Index
-///   0..2 (point sizes 15/17/20) × scale 1/2/3, all sized from the Medium
-///   layer's bounding box (`ceil(bbox × size/100 × scale)`), metadata-only
-///   with the atlas-link TVL;
+/// * one vector-glyph rendition (part 59) per set and -S/-M/-L template
+///   layer, keyed weight Regular (4) and the layer's size class;
+/// * nine cached-bitmap renditions (part 181) per set, keyed Glyph Cached
+///   Index 0..2 (point sizes 15/17/20) × scale 1/2/3, all sized from the
+///   Medium layer's bounding box (`ceil(bbox × size/100 × scale)`),
+///   metadata-only with the atlas-link TVL;
+/// * ONE packed ZZZZPackedAsset atlas (element 9 / part 181) per scale
+///   holding every set's cached sprites, as actool does (NNW oracle: one
+///   atlas per scale for the whole catalog);
 /// * every symbol rendition keyed at deployment-target token 5 (iOS 13).
-///
-/// Apple additionally packs the nine cache bitmaps into per-scale
-/// ZZZZPackedAsset atlases; the packing layout is CoreUI-internal (two
-/// NetNewsWire templates give no single deterministic rule), so the atlas
-/// renditions are left out. CoreUI falls back to the vector glyph when a
-/// cache lookup misses, which is the path that matters at runtime.
 enum SymbolRenderer {
     /// Reference point size the vector metrics are expressed at.
     static let referencePointSize = 17.0
@@ -23,9 +21,15 @@ enum SymbolRenderer {
     static let templateSize = 100.0
     /// Point sizes of the Medium size class, by Glyph Cached Index.
     static let cachedSizes: [Double] = [15, 17, 20]
-    /// Glyph-weight token: Regular (the only weight symbol templates
-    /// classify without explicit weight layer names).
+    /// Glyph-weight token the cache bitmaps key on: Regular.
     static let regularWeightToken: UInt16 = 4
+    /// Factor that sizes a Small-only template's cache bitmaps up to the
+    /// Medium class the cache entries key on. Fitted to Apple's IceCubes
+    /// oracle for the rocket and rocket.fill symbols: with 14/11 all 18
+    /// rocket sprite dimensions match and 17 of 18 rocket.fill ones do
+    /// (2x at 20 pt is 39x41 here, 40x42 in Apple's car). No single
+    /// factor fits both symbols, so the rule is not exact.
+    static let smallToMediumScale = 14.0 / 11.0
     /// Symbol renditions key at the OS that introduced symbol sets.
     static let deploymentTargetToken: UInt16 = 5
     /// Side margins reported in TVL 1018, observed as a template constant
@@ -34,28 +38,66 @@ enum SymbolRenderer {
     /// (0x3FBE2FFA, 0x3F94C000).
     static let leftMarginPoints = Float(bitPattern: 0x3FBE2FFA)
     static let rightMarginPoints = Float(bitPattern: 0x3F94C000)
-    /// Atlas layout for the three cached bitmaps of one scale: one shelf,
-    /// widest first, 2 px padding — Apple's observed single-symbol symbol
-    /// atlas shape (60x34, 112x64, 164x94 in the full-NNW oracle), whose
-    /// placements (2,2)/(24,2)/(43,2)... it reproduces exactly.
+    /// Largest atlas dimension App Store processing accepted in this
+    /// program: 2078x442 (the per-set IceCubes atlases of 54834467 and
+    /// dbad43f2). A 4454x442 single-shelf atlas (upload eb830d06) stayed in
+    /// PROCESSING for hours while the same catalog in per-set atlases
+    /// processed in minutes, so shelves wrap before reaching 2048 px.
+    static let maxAtlasShelfWidth: UInt32 = 2048
+
+    /// Atlas layout for the cached bitmaps of one scale: shelves widest
+    /// first with 2 px padding, wrapping to a new row at
+    /// `maxAtlasShelfWidth` — Apple's atlases are multi-row (the IceCubes
+    /// 2-set 1x atlas places six sprites in two shelves, 62x44), and the
+    /// single-shelf width of a whole catalog overflows the size processing
+    /// accepts. The full-NNW single-set shape (60x34, placements
+    /// (2,2)/(24,2)/(43,2)...) is unchanged: one shelf, widest first. Ties
+    /// break by input index so the layout is deterministic.
     static func atlasLayout(dims: [(width: UInt32, height: UInt32)])
         -> (placements: [(x: UInt32, y: UInt32)], atlasWidth: UInt32, atlasHeight: UInt32)
     {
         let pad: UInt32 = 2
-        let order = dims.indices.sorted { dims[$0].width > dims[$1].width }
+        let order = dims.indices.sorted {
+            (dims[$0].width, $0) > (dims[$1].width, $1)
+        }
         var x = pad
+        var y = pad
         var placements = [(x: UInt32, y: UInt32)](
             repeating: (0, 0), count: dims.count)
+        var rowHeight: UInt32 = 0
         var maxHeight: UInt32 = 0
+        var maxRowWidth: UInt32 = 0
         for i in order {
-            placements[i] = (x, pad)
+            if x > pad, x + dims[i].width > maxAtlasShelfWidth {
+                maxRowWidth = max(maxRowWidth, x)
+                y += rowHeight + pad
+                x = pad
+                rowHeight = 0
+            }
+            placements[i] = (x, y)
             x += dims[i].width + pad
-            maxHeight = max(maxHeight, dims[i].height)
+            rowHeight = max(rowHeight, dims[i].height)
+            maxHeight = max(maxHeight, y + rowHeight)
         }
-        return (placements, x, maxHeight + 2 * pad)
+        return (placements, max(maxRowWidth, x), maxHeight + pad)
     }
 
-    static func renditions(for set: LoadedSymbolSet, svgRasterizer: any SVGRasterizer) throws -> [Rendition] {
+    /// One `.symbolset` prepared for atlas assembly: the set's vector
+    /// renditions plus, per scale factor (1, 2, 3) and cached point size,
+    /// the rasterized gray-alpha sprite.
+    struct PreparedSymbolSet: Sendable {
+        let vectors: [Rendition]
+        let name: String
+        let filename: String
+        let identifier: UInt16
+        /// Sprites per scale-factor index, each per cached point size.
+        var sprites: [[(width: UInt32, height: UInt32, plane: [UInt8])]]
+    }
+
+    /// Parses one `.symbolset`, builds its vector renditions and rasterizes
+    /// its cached sprites. Atlas placement happens catalog-wide in
+    /// `renditions(for:)`.
+    static func prepare(for set: LoadedSymbolSet, svgRasterizer: any SVGRasterizer) throws -> PreparedSymbolSet {
         let svgData: Data
         do {
             svgData = try Data(contentsOf: set.svgURL)
@@ -66,7 +108,7 @@ enum SymbolRenderer {
         let identifier = UInt16(FacetKeys.nameHash(set.name) & 0xFFFF)
         let scale = Double(referencePointSize) / templateSize
 
-        var out: [Rendition] = []
+        var vectors: [Rendition] = []
 
         // Vector glyph per template layer. The Medium vector carries the
         // available-sizes list the cache entries key into.
@@ -89,7 +131,7 @@ enum SymbolRenderer {
             let baseline = Float(baselineUnits) * Float(scale)
             let capline = Float(capHeight) * Float(scale)
             let vector = SymbolVectorBody(
-                glyphWeight: regularWeightToken,
+                glyphWeight: layer.weight,
                 glyphSize: UInt16(layer.sizeClass),
                 identifier: identifier,
                 baseline: baseline,
@@ -102,7 +144,7 @@ enum SymbolRenderer {
                 svg: SymbolTemplate.rewrittenSVG(layer: layer, bounds: layerBounds, scale: scale),
                 renditionName: set.filename
             )
-            out.append(Rendition(
+            vectors.append(Rendition(
                 name: set.name,
                 idiom: .universal,
                 scale: .x1,
@@ -111,61 +153,83 @@ enum SymbolRenderer {
             ))
         }
 
-        // Cached bitmaps, sized from the Medium layer (or the only one),
-        // plus one packed atlas per scale holding their pixels.
-        let cacheLayer = template.layers.first { $0.sizeClass == 2 } ?? template.layers[0]
+        // Cached bitmaps come from the Regular weight, Medium layer. A
+        // template with only Small layers is sized up to Medium.
+        let regular = template.layers.filter { $0.weight == regularWeightToken }
+        let cacheLayer = regular.first { $0.sizeClass == 2 } ?? regular.first
+            ?? template.layers.first { $0.sizeClass == 2 } ?? template.layers[0]
+        let sizeUp = cacheLayer.sizeClass == 1 ? smallToMediumScale : 1.0
         let cacheBounds = SymbolTemplate.bounds(of: cacheLayer.children)
         let cacheSVG = SymbolTemplate.rewrittenSVG(layer: cacheLayer, bounds: cacheBounds, scale: scale)
+        var sprites: [[(width: UInt32, height: UInt32, plane: [UInt8])]] = []
         for factor in [1, 2, 3] {
-            var dims: [(width: UInt32, height: UInt32)] = []
+            var perFactor: [(width: UInt32, height: UInt32, plane: [UInt8])] = []
             for pointSize in cachedSizes {
-                let width = UInt32((cacheBounds.width * pointSize / templateSize * Double(factor)).rounded(.up))
-                let height = UInt32((cacheBounds.height * pointSize / templateSize * Double(factor)).rounded(.up))
-                dims.append((width, height))
-            }
-            let layout = atlasLayout(dims: dims)
-            var atlas = [UInt8](repeating: 0, count: Int(layout.atlasWidth * layout.atlasHeight * 2))
-            for (cachedIndex, pointSize) in cachedSizes.enumerated() {
-                let width = dims[cachedIndex].width
-                let height = dims[cachedIndex].height
-                let place = layout.placements[cachedIndex]
+                let width = UInt32((cacheBounds.width * sizeUp * pointSize / templateSize * Double(factor)).rounded(.up))
+                let height = UInt32((cacheBounds.height * sizeUp * pointSize / templateSize * Double(factor)).rounded(.up))
                 let png = try rasterizeCached(
                     cacheSVG, svgRasterizer: svgRasterizer, asset: set.name,
                     filename: set.filename, width: width, height: height
                 )
                 let d = try PNGSource.decodeBGRA(png)
-                let (rw, rh, rgba) = (d.width, d.height, d.bgra8)
+                var plane = [UInt8](repeating: 0, count: Int(width * height) * 2)
                 for row in 0..<Int(height) {
                     for col in 0..<Int(width) {
                         let src = (row * Int(width) + col) * 4
                         // Template glyphs are black: the gray plane is 0,
                         // alpha carries the coverage.
-                        let alpha = rgba[src + 3]
-                        let dst = ((Int(place.y) + row) * Int(layout.atlasWidth)
-                            + Int(place.x) + col) * 2
-                        atlas[dst] = 0
-                        atlas[dst + 1] = alpha
+                        plane[(row * Int(width) + col) * 2 + 1] = d.bgra8[src + 3]
                     }
                 }
-                let cached = SymbolCachedBody(
-                    glyphWeight: regularWeightToken,
-                    glyphSize: 2,
-                    cachedIndex: UInt16(cachedIndex),
-                    identifier: identifier,
-                    width: width,
-                    height: height,
-                    atlasX: place.x,
-                    atlasY: place.y,
-                    renditionName: set.filename
-                )
-                out.append(Rendition(
-                    name: set.name,
-                    idiom: .universal,
-                    scale: [1: .x1, 2: .x2, 3: .x3][factor]!,
-                    deploymentTarget: deploymentTargetToken,
-                    body: .symbolCached(cached)
-                ))
+                perFactor.append((width, height, plane))
             }
+            sprites.append(perFactor)
+        }
+        return PreparedSymbolSet(
+            vectors: vectors, name: set.name, filename: set.filename,
+            identifier: identifier, sprites: sprites)
+    }
+
+    /// Renditions for every `.symbolset` in the catalog. Apple packs the
+    /// cached bitmaps into ONE ZZZZPackedAsset atlas per scale for the
+    /// whole catalog (NNW oracle: one atlas per scale), and its car order
+    /// puts the atlas first inside each scale group ([atlas, vectors,
+    /// cached] at 1x, [atlas, cached] at 2x/3x). CoreUI resolves the packed
+    /// key (element 9, part 181, identifier 0) to the first rendition in
+    /// the car, so per-set atlases under the same key left every sprite of
+    /// the other sets out of bounds whenever a narrower atlas came first —
+    /// the sorted catalog walk of 98ff033 flipped IceCubes into exactly
+    /// that order and App Store processing never finished (upload f3a1784f;
+    /// the same car with the pair order swapped went VALID).
+    static func renditions(for sets: [PreparedSymbolSet]) -> [Rendition] {
+        var out: [Rendition] = []
+        let scaleNames = [1: Scale.x1, 2: Scale.x2, 3: Scale.x3]
+        for (factorIndex, factor) in [1, 2, 3].enumerated() {
+            // One shelf across every set's sprites at this scale.
+            let dims = sets.enumerated().flatMap { setIndex, set in
+                set.sprites[factorIndex].indices.map { index in
+                    (setIndex: setIndex, cachedIndex: index,
+                     width: set.sprites[factorIndex][index].width,
+                     height: set.sprites[factorIndex][index].height)
+                }
+            }
+            guard !dims.isEmpty else { continue }
+            let layout = atlasLayout(dims: dims.map { (width: $0.width, height: $0.height) })
+            var atlas = [UInt8](repeating: 0, count: Int(layout.atlasWidth * layout.atlasHeight * 2))
+            for (slot, sprite) in dims.enumerated() {
+                let place = layout.placements[slot]
+                let plane = sets[sprite.setIndex].sprites[factorIndex][sprite.cachedIndex].plane
+                for row in 0..<Int(sprite.height) {
+                    for col in 0..<Int(sprite.width) {
+                        let src = (row * Int(sprite.width) + col) * 2
+                        let dst = ((Int(place.y) + row) * Int(layout.atlasWidth)
+                            + Int(place.x) + col) * 2
+                        atlas[dst] = plane[src]
+                        atlas[dst + 1] = plane[src + 1]
+                    }
+                }
+            }
+            // Apple's car order inside each scale group: the atlas first.
             let packed = SymbolPackedBody(
                 width: layout.atlasWidth,
                 height: layout.atlasHeight,
@@ -176,10 +240,36 @@ enum SymbolRenderer {
             out.append(Rendition(
                 name: packed.renditionName,
                 idiom: .universal,
-                scale: [1: .x1, 2: .x2, 3: .x3][factor]!,
+                scale: scaleNames[factor]!,
                 deploymentTarget: deploymentTargetToken,
                 body: .symbolPacked(packed)
             ))
+            if factor == 1 {
+                for prepared in sets {
+                    out.append(contentsOf: prepared.vectors)
+                }
+            }
+            for (index, sprite) in dims.enumerated() {
+                let set = sets[sprite.setIndex]
+                let cached = SymbolCachedBody(
+                    glyphWeight: regularWeightToken,
+                    glyphSize: 2,
+                    cachedIndex: UInt16(sprite.cachedIndex),
+                    identifier: set.identifier,
+                    width: sprite.width,
+                    height: sprite.height,
+                    atlasX: layout.placements[index].x,
+                    atlasY: layout.placements[index].y,
+                    renditionName: set.filename
+                )
+                out.append(Rendition(
+                    name: set.name,
+                    idiom: .universal,
+                    scale: scaleNames[factor]!,
+                    deploymentTarget: deploymentTargetToken,
+                    body: .symbolCached(cached)
+                ))
+            }
         }
         return out
     }

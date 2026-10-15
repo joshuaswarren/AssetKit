@@ -508,7 +508,7 @@ public enum IconComposerCompiler {
         for appearance in appearances {
             let pixels = render(model: model, images: images, appearance: appearance)
             if appearance == nil { lightPixels = pixels }
-            let renditionTag = renditionUUIDTag()
+            let renditionTag = renditionUUIDTag(name: input.name, appearance: appearance, pixels: pixels)
             for idiom in idioms {
                 iconRenditions.append(Rendition(
                     name: input.name, idiom: idiom, scale: .x1,
@@ -613,13 +613,37 @@ public enum IconComposerCompiler {
         }
     }
 
-    /// The RenditionName suffix Apple appends: a per-compile UUID, a process
-    /// id and a monotonic counter. Values differ per compile by design; the
-    /// shape matches the oracle's.
-    static func renditionUUIDTag() -> String {
-        let pid = ProcessInfo.processInfo.processIdentifier
-        let counter = UInt64(Date().timeIntervalSince1970 * 1000)
-        return "\(UUID().uuidString)-\(pid)-\(String(format: "%016llX", counter))"
+    /// The RenditionName suffix in Apple's shape: UUID, process id, 64-bit
+    /// counter. actool fills it with a fresh UUID, its pid and a clock value,
+    /// so its own cars differ per compile (IceCubes oracle runs: pids 53704
+    /// and 53930). We derive all three from the content instead, so the same
+    /// inputs give a byte-identical car. The UUID bytes keep Apple's RFC-4122
+    /// v4 shape (version nibble 4, variant 10xx): 98ff033's raw hash nibbles
+    /// and per-rendition pid are the only untested deltas against the VALID
+    /// 9f509fe car, so both now match actool's observable shape. The pid is
+    /// one value per compile in actool (it is a process id), so it is a
+    /// constant here.
+    static func renditionUUIDTag(name: String, appearance: Appearance?, pixels: [UInt8]) -> String {
+        func fnv1a(_ seed: UInt64) -> UInt64 {
+            var h: UInt64 = 0xCBF2_9CE4_8422_2325 ^ seed
+            for byte in name.utf8 { h = (h ^ UInt64(byte)) &* 0x100_0000_01B3 }
+            for byte in appearanceNameTag(appearance).utf8 { h = (h ^ UInt64(byte)) &* 0x100_0000_01B3 }
+            for byte in pixels { h = (h ^ UInt64(byte)) &* 0x100_0000_01B3 }
+            return h
+        }
+        let a = fnv1a(1), b = fnv1a(2), c = fnv1a(3)
+        var bytes = [UInt8]()
+        for value in [a, b] {
+            for shift in stride(from: 56, through: 0, by: -8) {
+                bytes.append(UInt8(truncatingIfNeeded: value >> UInt64(shift)))
+            }
+        }
+        bytes[6] = (bytes[6] & 0x0F) | 0x40
+        bytes[8] = (bytes[8] & 0x3F) | 0x80
+        let hex = bytes.map { String(format: "%02X", $0) }.joined()
+        let chars = Array(hex)
+        let uuid = [0..<8, 8..<12, 12..<16, 16..<20, 20..<32].map { String(chars[$0]) }.joined(separator: "-")
+        return "\(uuid)-\(53_704)-\(String(format: "%016llX", c >> 8))"
     }
 
     /// Premultiplied BGRA bytes for a decoded layer image (PNGSource's
