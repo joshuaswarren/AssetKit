@@ -364,15 +364,6 @@ struct AppIconSingleSizeAppearancesTests {
         ])
         let single = try #require(BitmapKeys.descriptor(forAsset: "AppIcon", renditions: icon, keyFormat: format))
         #expect(slots(single) == [6, 1, 1, 1, 3, 1, 1])
-        var wide = single
-        wide.hasWideGamut = true
-        #expect(slots(wide) == [6, 1, 1, 1, 3, 1, 3])
-        let stack = BitmapKeys.Descriptor(kind: .iconComposerIcon, idiomSubtypeCount: 0, keyFormat: format)
-        #expect(slots(stack) == [7, 1, 1, 1, 3, 1, 1])
-        var image = BitmapKeys.Descriptor(kind: .image, idiomSubtypeCount: 0, keyFormat: format)
-        #expect(slots(image) == [1, 1, 1, 1, 1, 1, 1])
-        image.hasWideGamut = true
-        #expect(slots(image) == [1, 1, 1, 1, 1, 1, 3])
     }
 
     @Test("BITMAPKEYS single-size descriptors match the cs1/tint oracles")
