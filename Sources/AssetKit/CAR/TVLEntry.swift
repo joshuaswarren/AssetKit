@@ -4,9 +4,9 @@ import Foundation
 ///
 /// CoreUI consumes a small fixed set of TVL types between the 184-byte CSI
 /// header and the rendition body. Closed enum + exhaustive switch keeps the
-/// type IDs and value layouts in one place; the alignment rule for
+/// type IDs and value layouts in one place; the stride rule for
 /// `.bytesPerRow` lives inside the enum (callers pass width, encoding
-/// computes the 16-byte-aligned stride).
+/// computes the exact row stride).
 ///
 /// Type IDs and value layouts derived from actool's reference Assets.car
 /// (Xcode 26 / CoreUI 970). Without these entries, CoreUI can parse the
@@ -34,9 +34,8 @@ enum TVLEntry {
     /// bitmap-count / has-mipmap-stages flag.
     case bitmapFlag
 
-    /// Type 1007 (4-byte value): bytes per row, aligned up to 16. Caller
-    /// passes the pixel width and per-pixel byte count (4 for ARGB/GA16,
-    /// 2 for GA8).
+    /// Type 1007 (4-byte value): bytes per row, exactly width times bytes
+    /// per pixel (4 for ARGB/GA16, 2 for GA8).
     case bytesPerRow(width: UInt32, bytesPerPixel: UInt32)
 
     /// Type 1010 (50-byte value): symbol-cache link to the packed atlas.
@@ -104,12 +103,10 @@ enum TVLEntry {
         case .bytesPerRow(let width, let bytesPerPixel):
             w.writeLE(UInt32(1007))
             w.writeLE(UInt32(4))
-            // actool stores the exact stride (NNW oracle: 4096 for ARGB and
-            // GA16, 2048 for GA8 at 1024 px); ours keeps the historical
-            // 16-byte alignment, identical for these strides.
-            let bytesPerRow = width * bytesPerPixel
-            let aligned = (bytesPerRow + 15) & ~15
-            w.writeLE(aligned)
+            // The exact stride, as actool stores it (NNW oracle: 4096 for
+            // ARGB and GA16, 2048 for GA8 at 1024 px). The MLEC chunks hold
+            // unpadded rows, and Apple's decoder reads them with this value.
+            w.writeLE(width * bytesPerPixel)
         case .symbolLink(let x, let y, let width, let height, let keyPairs):
             w.writeLE(UInt32(1010))
             w.writeLE(UInt32(4 + 4 + 16 + 2 + 4 + keyPairs.count * 4 + 4))

@@ -209,11 +209,11 @@ struct AppIconSingleSizeAppearancesTests {
         #expect(u32(g8, 0x1C) == 2)  // gray gamma 22
         #expect(u32(g16, 0x1C) == 6) // extended gray
 
-        // TVL 1007 = bytes per row (2 for GA8, 4 for GA16), 16-aligned.
+        // TVL 1007 = bytes per row (2 for GA8, 4 for GA16), exact: the MLEC rows are unpadded.
         // TVL layout: 1001(28B) + 1003(36B) + 1004(16B) + 1006(12B) = 92B,
         // then 1007's tag+len (8B) precede its value.
-        #expect(u32(g8, 184 + 92 + 8) == 16)  // 1 px * 2 B/px aligned to 16
-        #expect(u32(g16, 184 + 92 + 8) == 16) // 1 px * 4 B/px aligned to 16
+        #expect(u32(g8, 184 + 92 + 8) == 2)  // 1 px * 2 B/px
+        #expect(u32(g16, 184 + 92 + 8) == 4) // 1 px * 4 B/px
 
         // MLEC header: compression 3; bytesPerPixel is actool's CONSTANT 4
         // for every pixel format (even GA8, whose chunks are 2 B/px).
