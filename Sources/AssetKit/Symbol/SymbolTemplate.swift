@@ -298,8 +298,8 @@ public enum SymbolTemplate {
     /// accumulate from the current point. Control points count: actool's
     /// vector viewBox of the IceCubes rocket (Ultralight, Regular, Black
     /// layers) equals the bounds of all path points to four decimals, and
-    /// the on-curve extrema alone come out smaller. Arcs contribute their
-    /// end point only.
+    /// the on-curve extrema alone come out smaller. An arc contributes its
+    /// end point and the extreme points of its ellipse that lie inside the sweep.
     private static func pathPoints(_ d: String) -> [(Double, Double)] {
         let tokens = tokenizePathData(d)
         var points: [(Double, Double)] = []
@@ -342,8 +342,13 @@ public enum SymbolTemplate {
             case "V":
                 y = oy + values[0]
             case "A":
-                x = ox + values[5]
-                y = oy + values[6]
+                let endX = ox + values[5]
+                let endY = oy + values[6]
+                points.append(contentsOf: arcExtrema(
+                    fromX: x, fromY: y, radiusX: values[0], radiusY: values[1], rotation: values[2],
+                    largeArc: values[3] != 0, sweep: values[4] != 0, toX: endX, toY: endY))
+                x = endX
+                y = endY
             default:
                 for k in stride(from: 0, to: count - 2, by: 2) {
                     points.append((ox + values[k], oy + values[k + 1]))
@@ -359,6 +364,56 @@ public enum SymbolTemplate {
             }
         }
         return points
+    }
+
+    /// The points of an SVG elliptical arc where x or y is extreme and that
+    /// lie inside the sweep (SVG 1.1 F.6.5 end-point to center conversion).
+    /// Degenerate arcs (equal end points, a zero radius) add nothing; their
+    /// end point is the caller's.
+    static func arcExtrema(
+        fromX x1: Double, fromY y1: Double, radiusX: Double, radiusY: Double, rotation: Double,
+        largeArc: Bool, sweep: Bool, toX x2: Double, toY y2: Double
+    ) -> [(Double, Double)] {
+        var rx = abs(radiusX), ry = abs(radiusY)
+        guard rx > 0, ry > 0, x1 != x2 || y1 != y2 else { return [] }
+        let phi = rotation * .pi / 180
+        let cosPhi = cos(phi), sinPhi = sin(phi)
+        let dx = (x1 - x2) / 2, dy = (y1 - y2) / 2
+        let x1p = cosPhi * dx + sinPhi * dy
+        let y1p = -sinPhi * dx + cosPhi * dy
+        let lambda = x1p * x1p / (rx * rx) + y1p * y1p / (ry * ry)
+        if lambda > 1 {
+            rx *= lambda.squareRoot()
+            ry *= lambda.squareRoot()
+        }
+        let numerator = rx * rx * ry * ry - rx * rx * y1p * y1p - ry * ry * x1p * x1p
+        let denominator = rx * rx * y1p * y1p + ry * ry * x1p * x1p
+        let coefficient = (largeArc == sweep ? -1.0 : 1.0) * (max(0, numerator / denominator)).squareRoot()
+        let cxp = coefficient * rx * y1p / ry
+        let cyp = -coefficient * ry * x1p / rx
+        let cx = cosPhi * cxp - sinPhi * cyp + (x1 + x2) / 2
+        let cy = sinPhi * cxp + cosPhi * cyp + (y1 + y2) / 2
+        let start = atan2((y1p - cyp) / ry, (x1p - cxp) / rx)
+        var delta = atan2((-y1p - cyp) / ry, (-x1p - cxp) / rx) - start
+        if !sweep, delta > 0 { delta -= 2 * .pi }
+        if sweep, delta < 0 { delta += 2 * .pi }
+        // x(t) = cx + rx cos(phi) cos t - ry sin(phi) sin t, y(t) = cy + rx sin(phi) cos t + ry cos(phi) sin t.
+        // dx/dt = 0 at t = atan2(-ry sin(phi), rx cos(phi)) + k pi; dy/dt = 0 at atan2(ry cos(phi), rx sin(phi)) + k pi.
+        let base = [atan2(-ry * sinPhi, rx * cosPhi), atan2(ry * cosPhi, rx * sinPhi)]
+        var out: [(Double, Double)] = []
+        for t0 in base {
+            for k in 0..<2 {
+                let t = t0 + Double(k) * .pi
+                // Offset of t from the arc start in the sweep direction, in [0, 2 pi).
+                var offset = sweep ? t - start : start - t
+                offset = offset.truncatingRemainder(dividingBy: 2 * .pi)
+                if offset < 0 { offset += 2 * .pi }
+                guard offset <= abs(delta) else { continue }
+                out.append((cx + rx * cosPhi * cos(t) - ry * sinPhi * sin(t),
+                            cy + rx * sinPhi * cos(t) + ry * cosPhi * sin(t)))
+            }
+        }
+        return out
     }
 
     private enum PathToken {

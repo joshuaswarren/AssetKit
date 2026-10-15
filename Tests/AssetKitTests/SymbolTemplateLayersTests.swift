@@ -39,4 +39,33 @@ struct SymbolTemplateLayersTests {
         #expect(b.minY == 20)
         #expect(b.maxY == 30)
     }
+
+    private func bounds(ofPath d: String) throws -> SymbolTemplate.Bounds {
+        let svg = """
+        <svg xmlns="http://www.w3.org/2000/svg"><g id="Guides">
+        <line id="Baseline-S" y1="30"/><line id="Capline-S" y1="20"/></g>
+        <g id="Symbols"><g id="Regular-S"><path d="\(d)"/></g></g></svg>
+        """
+        let parsed = try SymbolTemplate.parse(Data(svg.utf8), asset: "arc", filename: "arc.svg")
+        return SymbolTemplate.bounds(of: parsed.layers[0].children)
+    }
+
+    @Test("A semicircle arc reaches the top of its ellipse, not just its end points")
+    func semicircleArc() throws {
+        // Sweep 1 runs from 180 degrees through 270 (the top, y = 0 in SVG's y-down space) to 360.
+        func near(_ b: SymbolTemplate.Bounds, _ x0: Double, _ x1: Double, _ y0: Double, _ y1: Double) -> Bool {
+            abs(b.minX - x0) < 1e-9 && abs(b.maxX - x1) < 1e-9 && abs(b.minY - y0) < 1e-9 && abs(b.maxY - y1) < 1e-9
+        }
+        #expect(near(try bounds(ofPath: "M0 10 A10 10 0 0 1 20 10"), 0, 20, 0, 10))
+        #expect(near(try bounds(ofPath: "M0 10 A10 10 0 0 0 20 10"), 0, 20, 10, 20))
+        #expect(near(try bounds(ofPath: "m0 10 a10 10 0 0 1 20 0"), 0, 20, 0, 10))
+    }
+
+    @Test("A large arc takes the center that gives the long way round")
+    func largeArc() throws {
+        // From (0,10) to (10,0), radius 10, large arc, sweep 1: center (0,0), angles 90 to 360 degrees.
+        let b = try bounds(ofPath: "M0 10 A10 10 0 1 1 10 0")
+        #expect(abs(b.minX + 10) < 1e-9 && abs(b.maxX - 10) < 1e-9)
+        #expect(abs(b.minY + 10) < 1e-9 && abs(b.maxY - 10) < 1e-9)
+    }
 }
