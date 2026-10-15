@@ -21,9 +21,15 @@ enum SymbolRenderer {
     static let templateSize = 100.0
     /// Point sizes of the Medium size class, by Glyph Cached Index.
     static let cachedSizes: [Double] = [15, 17, 20]
-    /// Glyph-weight token: Regular (the only weight symbol templates
-    /// classify without explicit weight layer names).
+    /// Glyph-weight token the cache bitmaps key on: Regular.
     static let regularWeightToken: UInt16 = 4
+    /// Factor that sizes a Small-only template's cache bitmaps up to the
+    /// Medium class the cache entries key on. Fitted to Apple's IceCubes
+    /// oracle for the rocket and rocket.fill symbols: with 14/11 all 18
+    /// rocket sprite dimensions match and 17 of 18 rocket.fill ones do
+    /// (2x at 20 pt is 39x41 here, 40x42 in Apple's car). No single
+    /// factor fits both symbols, so the rule is not exact.
+    static let smallToMediumScale = 14.0 / 11.0
     /// Symbol renditions key at the OS that introduced symbol sets.
     static let deploymentTargetToken: UInt16 = 5
     /// Side margins reported in TVL 1018, observed as a template constant
@@ -125,7 +131,7 @@ enum SymbolRenderer {
             let baseline = Float(baselineUnits) * Float(scale)
             let capline = Float(capHeight) * Float(scale)
             let vector = SymbolVectorBody(
-                glyphWeight: regularWeightToken,
+                glyphWeight: layer.weight,
                 glyphSize: UInt16(layer.sizeClass),
                 identifier: identifier,
                 baseline: baseline,
@@ -147,16 +153,20 @@ enum SymbolRenderer {
             ))
         }
 
-        // Cached bitmaps, sized from the Medium layer (or the only one).
-        let cacheLayer = template.layers.first { $0.sizeClass == 2 } ?? template.layers[0]
+        // Cached bitmaps come from the Regular weight, Medium layer. A
+        // template with only Small layers is sized up to Medium.
+        let regular = template.layers.filter { $0.weight == regularWeightToken }
+        let cacheLayer = regular.first { $0.sizeClass == 2 } ?? regular.first
+            ?? template.layers.first { $0.sizeClass == 2 } ?? template.layers[0]
+        let sizeUp = cacheLayer.sizeClass == 1 ? smallToMediumScale : 1.0
         let cacheBounds = SymbolTemplate.bounds(of: cacheLayer.children)
         let cacheSVG = SymbolTemplate.rewrittenSVG(layer: cacheLayer, bounds: cacheBounds, scale: scale)
         var sprites: [[(width: UInt32, height: UInt32, plane: [UInt8])]] = []
         for factor in [1, 2, 3] {
             var perFactor: [(width: UInt32, height: UInt32, plane: [UInt8])] = []
             for pointSize in cachedSizes {
-                let width = UInt32((cacheBounds.width * pointSize / templateSize * Double(factor)).rounded(.up))
-                let height = UInt32((cacheBounds.height * pointSize / templateSize * Double(factor)).rounded(.up))
+                let width = UInt32((cacheBounds.width * sizeUp * pointSize / templateSize * Double(factor)).rounded(.up))
+                let height = UInt32((cacheBounds.height * sizeUp * pointSize / templateSize * Double(factor)).rounded(.up))
                 let png = try rasterizeCached(
                     cacheSVG, svgRasterizer: svgRasterizer, asset: set.name,
                     filename: set.filename, width: width, height: height

@@ -36,6 +36,10 @@ public enum SymbolTemplate {
     struct Layer {
         /// 1 Small, 2 Medium, 3 Large — from the `-S`/`-M`/`-L` suffix.
         var sizeClass: Int
+        /// Glyph-weight key token from the layer id prefix (`Regular-S` is
+        /// 4, `Ultralight-S` 1, `Black-S` 9): the weight's rank in actool's
+        /// list. Layers of one size class differ only by this token.
+        var weight: UInt16
         var children: [Node]
         /// The layer group's own translate (dropped in the rewrite but
         /// needed to place the drawing relative to the guides).
@@ -69,6 +73,13 @@ public enum SymbolTemplate {
         }
     }
 
+    /// Layer-id weight prefix to glyph-weight key token (Apple's IceCubes
+    /// rocket oracle keys Ultralight 1, Regular 4, Black 9).
+    static let weightTokens: [String: UInt16] = [
+        "Ultralight": 1, "Thin": 2, "Light": 3, "Regular": 4, "Medium": 5,
+        "Semibold": 6, "Bold": 7, "Heavy": 8, "Black": 9,
+    ]
+
     // MARK: Parsing
 
     static func parse(_ data: Data, asset: String, filename: String) throws -> Parsed {
@@ -82,7 +93,8 @@ public enum SymbolTemplate {
             throw SymbolError.noSymbolsGroup(asset: asset)
         }
         let layers = symbols.children.compactMap { node -> Layer? in
-            guard let id = node.id else { return nil }
+            guard let id = node.id, let separator = id.lastIndex(of: "-"),
+                  let weight = weightTokens[String(id[..<separator])] else { return nil }
             let sizeClass: Int
             switch id.last {
             case "S": sizeClass = 1
@@ -92,6 +104,7 @@ public enum SymbolTemplate {
             }
             return Layer(
                 sizeClass: sizeClass,
+                weight: weight,
                 children: node.children,
                 translation: node.translation ?? (0, 0)
             )
@@ -280,18 +293,69 @@ public enum SymbolTemplate {
         return b
     }
 
-    /// Coordinate pairs from a path's `d`, in document order. Absolute
-    /// commands with comma/space separators cover the symbol templates.
+    /// Every on-curve and control point of a path's `d`, in absolute user
+    /// units. Relative commands (Inkscape and other editors write them)
+    /// accumulate from the current point. Control points count: actool's
+    /// vector viewBox of the IceCubes rocket (Ultralight, Regular, Black
+    /// layers) equals the bounds of all path points to four decimals, and
+    /// the on-curve extrema alone come out smaller. Arcs contribute their
+    /// end point only.
     private static func pathPoints(_ d: String) -> [(Double, Double)] {
         let tokens = tokenizePathData(d)
         var points: [(Double, Double)] = []
+        var x = 0.0, y = 0.0, startX = 0.0, startY = 0.0
+        var command: Character = "M"
         var i = 0
-        while i + 1 < tokens.count {
-            if case .number(let x) = tokens[i], case .number(let y) = tokens[i + 1] {
-                points.append((x, y))
-                i += 2
-            } else {
+        while i < tokens.count {
+            if case .command(let c) = tokens[i] {
+                command = c
                 i += 1
+                if c == "Z" || c == "z" {
+                    x = startX
+                    y = startY
+                    continue
+                }
+            }
+            let count: Int
+            switch command {
+            case "M", "m", "L", "l", "T", "t": count = 2
+            case "H", "h", "V", "v": count = 1
+            case "C", "c": count = 6
+            case "S", "s", "Q", "q": count = 4
+            case "A", "a": count = 7
+            default:
+                i += 1
+                continue
+            }
+            var values: [Double] = []
+            while i < tokens.count, values.count < count, case .number(let v) = tokens[i] {
+                values.append(v)
+                i += 1
+            }
+            guard values.count == count else { continue }
+            let relative = command.isLowercase
+            let ox = relative ? x : 0
+            let oy = relative ? y : 0
+            switch command.uppercased() {
+            case "H":
+                x = ox + values[0]
+            case "V":
+                y = oy + values[0]
+            case "A":
+                x = ox + values[5]
+                y = oy + values[6]
+            default:
+                for k in stride(from: 0, to: count - 2, by: 2) {
+                    points.append((ox + values[k], oy + values[k + 1]))
+                }
+                x = ox + values[count - 2]
+                y = oy + values[count - 1]
+            }
+            points.append((x, y))
+            if command == "M" || command == "m" {
+                startX = x
+                startY = y
+                command = relative ? "l" : "L"
             }
         }
         return points
