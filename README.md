@@ -65,3 +65,7 @@ The test suite includes a macOS-only gate (`AssetutilParseTests`) that compiles 
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Contributors
+
+Everyone credited so far: [CONTRIBUTORS.md](CONTRIBUTORS.md).
