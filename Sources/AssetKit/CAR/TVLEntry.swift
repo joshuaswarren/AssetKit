@@ -4,9 +4,8 @@ import Foundation
 ///
 /// CoreUI consumes a small fixed set of TVL types between the 184-byte CSI
 /// header and the rendition body. Closed enum + exhaustive switch keeps the
-/// type IDs and value layouts in one place; the alignment rule for
-/// `.bytesPerRow` lives inside the enum (callers pass width, encoding
-/// computes the 16-byte-aligned stride).
+/// type IDs and value layouts in one place; `.bytesPerRow` computes the
+/// stride from the pixel width inside the enum.
 ///
 /// Type IDs and value layouts derived from actool's reference Assets.car
 /// (Xcode 26 / CoreUI 970). Without these entries, CoreUI can parse the
@@ -30,9 +29,12 @@ enum TVLEntry {
     /// bitmap-count / has-mipmap-stages flag.
     case bitmapFlag
 
-    /// Type 1007 (4-byte value): bytes per row, aligned up to 16. Caller
-    /// passes the pixel width; encoding computes `width * 4` then rounds up
-    /// to a 16-byte stride.
+    /// Type 1007 (4-byte value): bytes per row of the decoded bitmap. Caller
+    /// passes the pixel width; encoding writes `width * 4`, the stride
+    /// `MLECBody` packs the rows at. actool writes the exact stride too.
+    /// Rounding it up (to 16 bytes, say) makes CoreUI read every row of a
+    /// bitmap whose width isn't a multiple of 4 offset from the last, so the
+    /// image comes out sheared: 29pt app icons (29, 58, 87 px) show this.
     case bytesPerRow(width: UInt32)
 
     func encode(into w: inout ByteWriter) {
@@ -67,9 +69,7 @@ enum TVLEntry {
         case .bytesPerRow(let width):
             w.writeLE(UInt32(1007))
             w.writeLE(UInt32(4))
-            let bytesPerRow = width * 4
-            let aligned = (bytesPerRow + 15) & ~15
-            w.writeLE(aligned)
+            w.writeLE(width * 4)
         }
     }
 }
