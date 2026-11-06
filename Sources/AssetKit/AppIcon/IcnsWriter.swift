@@ -25,6 +25,25 @@ enum IcnsWriter {
         }
     }
 
+    /// The `.icns` actool writes for an Icon Composer `.icon` on macOS: the
+    /// same four elements, rendered from the light icon (oracle order: ic13,
+    /// ic11, ic04, ic07). `pngs` maps the pixel side (16, 32, 128, 256) to
+    /// PNG bytes.
+    static func write(iconName: String, pngs: [Int: Data]) throws -> Data {
+        var body = Data([0x69, 0x63, 0x6e, 0x73, 0, 0, 0, 0])
+        for (type, side) in [("ic13", 256), ("ic11", 32), ("ic04", 16), ("ic07", 128)] {
+            guard let png = pngs[side] else { continue }
+            let payload = type == "ic04"
+                ? try argb(fromPNG: png, asset: iconName, filename: "\(side)px")
+                : png
+            body.append(Data(type.utf8))
+            body.append(be32(UInt32(payload.count + 8)))
+            body.append(payload)
+        }
+        body.replaceSubrange(4..<8, with: be32(UInt32(body.count)))
+        return body
+    }
+
     static func write(_ appIcon: LoadedAppIcon) throws -> Data {
         // 8-byte header: 'icns' + total length (patched below).
         var body = Data([0x69, 0x63, 0x6e, 0x73, 0, 0, 0, 0])

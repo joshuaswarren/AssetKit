@@ -35,6 +35,9 @@ enum FacetKeys {
         case iconGroup
         /// Icon Composer named gradient (part 247).
         case namedGradient
+        /// A macOS Icon Composer app icon: the facet points at the image
+        /// stack (part 245), not the icon images (actool 27.0 macosx oracle).
+        case iconStack
 
         func pairs(identifier: UInt16) -> [(UInt16, UInt16)] {
             switch self {
@@ -67,6 +70,12 @@ enum FacetKeys {
                 return [
                     (UInt16(AttributeID.element.rawValue), RenditionKey.Element.bitmap.rawValue),
                     (UInt16(AttributeID.part.rawValue), RenditionKey.Part.iconGroup.rawValue),
+                    (UInt16(AttributeID.identifier.rawValue), identifier),
+                ]
+            case .iconStack:
+                return [
+                    (UInt16(AttributeID.element.rawValue), RenditionKey.Element.bitmap.rawValue),
+                    (UInt16(AttributeID.part.rawValue), RenditionKey.Part.iconImageStack.rawValue),
                     (UInt16(AttributeID.identifier.rawValue), identifier),
                 ]
             case .namedGradient:

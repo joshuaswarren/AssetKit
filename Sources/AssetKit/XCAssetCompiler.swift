@@ -16,10 +16,18 @@ public struct CompileResult: Sendable {
     /// catalog contained exactly one `.appiconset`.
     public var appIconBundle: AppIconBundle?
 
-    public init(carData: Data, renditionCount: Int, appIconBundle: AppIconBundle? = nil) {
+    /// Warnings about the catalog that don't stop the compile, for example an
+    /// asset whose renditions share a rendition key.
+    public var warnings: [CompileWarning]
+
+    public init(
+        carData: Data, renditionCount: Int, appIconBundle: AppIconBundle? = nil,
+        warnings: [CompileWarning] = []
+    ) {
         self.carData = carData
         self.renditionCount = renditionCount
         self.appIconBundle = appIconBundle
+        self.warnings = warnings
     }
 }
 
@@ -76,6 +84,26 @@ public struct LooseFile: Sendable {
 }
 
 public struct XCAssetCompiler: Sendable {
+    /// The renditions a classic macOS car keeps (actool 27.0 macosx
+    /// oracles). Its key has no idiom, subtype or 3x slot, so:
+    /// - no 3x renditions (Macs have no 3x displays), no idioms other than
+    ///   mac and universal;
+    /// - where a mac and a universal rendition land on the same key (same
+    ///   asset, scale, appearance, gamut, ...), the mac one wins. A slot
+    ///   without a mac rendition keeps its universal one (oracle: universal
+    ///   1x and dark 2x kept next to a mac-only 2x).
+    static func macRenditions(_ renditions: [Rendition]) -> [Rendition] {
+        let candidates = renditions.filter { rendition in
+            rendition.scale != .x3 && (rendition.idiom == .mac || rendition.idiom == .universal)
+        }
+        let format = KeyFormat.classicMac(for: candidates)
+        let keys = candidates.map { RenditionKey(rendition: $0).encode(format: format) }
+        let macSlots = Set(zip(candidates, keys).filter { $0.0.idiom == .mac }.map(\.1))
+        return zip(candidates, keys)
+            .filter { rendition, key in rendition.idiom == .mac || !macSlots.contains(key) }
+            .map(\.0)
+    }
+
     public var deploymentTarget: String
     /// Strategy used to rasterise `.svg` sources to PNG bytes. Defaults to
     /// `RsvgConvertRasterizer`, which shells out to `rsvg-convert`. Replace
@@ -157,6 +185,8 @@ public struct XCAssetCompiler: Sendable {
         if let iconComposer {
             // Icon Composer .icon source: the layered rendition set plus the
             // loose home-screen PNGs and partial plist.
+            var iconComposer = iconComposer
+            iconComposer.platform = platform
             let compiled = try IconComposerCompiler.compile(input: iconComposer)
             renditions.append(contentsOf: compiled.renditions)
             appIconBundle = compiled.appIconBundle
@@ -195,27 +225,45 @@ public struct XCAssetCompiler: Sendable {
             }
         }
 
-        var alternates = loaded.alternateAppIcons(primary: appIconName).map(\.name)
+        // Without --app-icon, a catalog with one appiconset uses it as the
+        // primary (CatalogLoader.appIcon(named:)); it is not also its own
+        // alternate (that wrote its renditions twice, with identical keys).
+        let primaryName = iconComposer == nil ? loaded.appIcon(named: appIconName)?.name : appIconName
+        let alternateAppIcons = loaded.alternateAppIcons(primary: appIconName).filter { $0.name != primaryName }
+        var alternates = alternateAppIcons.map(\.name)
         // Each alternate .appiconset renders its own renditions into the car.
         // Apple's partial plist doesn't carry CFBundleIconFiles for them
         // (oracle: only CFBundleIconName), so no per-set plist/loose here.
-        for altAppIcon in loaded.alternateAppIcons(primary: appIconName) {
+        for altAppIcon in alternateAppIcons {
             let plist = try AppIconPlistEmitter.emit(altAppIcon)
             renditions.append(contentsOf: try ImageRenderer.appIconRenditions(
                 for: altAppIcon, files: plist.iconFiles))
         }
         for alternate in alternateIconComposers {
+            var alternate = alternate
+            alternate.platform = platform
             let compiled = try IconComposerCompiler.compile(input: alternate)
             renditions.append(contentsOf: compiled.renditions)
             alternates.append(alternate.name)
         }
         appIconBundle?.alternateIconNames = alternates.sorted()
 
+        let classicMac = platform == "macosx" && (iconComposer != nil || !alternateIconComposers.isEmpty)
+        if classicMac {
+            renditions = Self.macRenditions(renditions)
+            // An alternate whose renditions were all for other idioms is gone.
+            alternates = alternates.filter { name in renditions.contains { $0.name == name } }
+            appIconBundle?.alternateIconNames = alternates.sorted()
+        }
+
         let writer = CARWriter(
             deploymentTarget: deploymentTarget, renditions: renditions,
-            macSchema: platform == "macosx")
-        let bytes = try writer.write()
+            macSchema: platform == "macosx" && !classicMac,
+            classicMacSchema: classicMac)
+        let car = try writer.compile()
 
-        return CompileResult(carData: bytes, renditionCount: renditions.count, appIconBundle: appIconBundle)
+        return CompileResult(
+            carData: car.data, renditionCount: renditions.count, appIconBundle: appIconBundle,
+            warnings: car.warnings)
     }
 }

@@ -19,11 +19,16 @@ public enum IconComposerCompiler {
         public var directory: URL
         /// actool's --target-device values.
         public var idioms: [String]
+        /// actool's --platform value. `macosx` compiles the macOS icon set:
+        /// flat icon images at 16 to 1024 pt for the system appearance,
+        /// an `.icns`, and the CFBundleIconFile/CFBundleIconName plist keys.
+        public var platform: String
 
-        public init(name: String, directory: URL, idioms: [String]) {
+        public init(name: String, directory: URL, idioms: [String], platform: String = "iphoneos") {
             self.name = name
             self.directory = directory
             self.idioms = idioms
+            self.platform = platform
         }
     }
 
@@ -55,6 +60,8 @@ public enum IconComposerCompiler {
         var scale: Double
         var translation: (Double, Double)
         var fills: [[String: Any]]
+        /// The fill came from a plain "fill" key, not fill-specializations.
+        var plainFill = false
         var blends: [[String: Any]]
         var opacities: [[String: Any]]
         var glass: Bool
@@ -103,6 +110,10 @@ public enum IconComposerCompiler {
                 if opacities.isEmpty, let opacity = layer["opacity"] {
                     opacities = [["value": opacity]]
                 }
+                var fills = layer["fill-specializations"] as? [[String: Any]] ?? []
+                if fills.isEmpty, let fill = layer["fill"] {
+                    fills = [["value": fill]]
+                }
                 var blends = layer["blend-mode-specializations"] as? [[String: Any]] ?? []
                 if let mode = layer["blend-mode"] as? String, !blends.contains(where: { $0["appearance"] == nil }) {
                     blends.insert(["value": mode], at: 0)
@@ -111,7 +122,8 @@ public enum IconComposerCompiler {
                     imageName: layer["image-name"] as? String ?? "",
                     scale: (position["scale"] as? NSNumber)?.doubleValue ?? 1,
                     translation: (translation.first ?? 0, translation.count > 1 ? translation[1] : 0),
-                    fills: layer["fill-specializations"] as? [[String: Any]] ?? [],
+                    fills: fills,
+                    plainFill: layer["fill-specializations"] == nil && layer["fill"] != nil,
                     blends: blends,
                     opacities: opacities,
                     glass: layer["glass"] as? Bool ?? true))
@@ -136,8 +148,11 @@ public enum IconComposerCompiler {
         }
         var fills = json["fill-specializations"] as? [[String: Any]] ?? []
         if fills.isEmpty, let fill = json["fill"] {
-            // A bare fill is the light background. Dark with no specialization is system-dark.
-            fills = [["value": fill], ["appearance": "dark", "value": "system-dark"]]
+            // A bare fill is the light background. Dark with no specialization is
+            // system-dark, except for a clear solid fill: actool keeps it clear in
+            // every appearance.
+            fills = isClear(fill) ? [["value": fill]]
+                : [["value": fill], ["appearance": "dark", "value": "system-dark"]]
         }
         return IconModel(fills: fills, groups: groups)
     }
@@ -181,6 +196,42 @@ public enum IconComposerCompiler {
         default:
             return nil
         }
+    }
+
+    /// Extended-gray white: Color-1 of every icon, and the light background
+    /// of an icon.json without any fill.
+    static let white = IconColor(colorSpaceID: 6, components: [1, 1])
+
+    /// A solid fill with alpha 0 (Icon Composer's clear background).
+    static func isClear(_ value: Any) -> Bool {
+        guard let solid = (value as? [String: Any])?["solid"] as? String,
+              let color = parseColor(solid) else { return false }
+        return color.components.last == 0
+    }
+
+    /// The background fill of one appearance (actool 27.0, macosx and
+    /// iphoneos oracles): the resolved fill; else system-dark in dark, white
+    /// for an icon.json without any fill, system-light for "automatic".
+    static func backgroundFill(_ model: IconModel, appearance: Appearance?) -> Fill {
+        if let fill = resolveFill(model.fills, appearance: appearance) { return fill }
+        if appearance == .dark { return presetFill("system-dark")! }
+        return model.fills.isEmpty ? .solid(white) : presetFill("system-light")!
+    }
+
+    /// A dark layer's fill when the dark background is automatic (not the
+    /// light one): a light-shaped layer without fill-specializations takes
+    /// the light background fill. A layer with a plain fill of its own takes
+    /// it too, opaque (half-transparent red background: Color-7, alpha 1).
+    /// nil: the layer keeps its own dark fill.
+    static func automaticDarkFill(_ model: IconModel, layer: Layer, lightShape: Bool) -> Fill? {
+        guard layer.fills.isEmpty || layer.plainFill, lightShape else { return nil }
+        let light = backgroundFill(model, appearance: nil)
+        guard backgroundFill(model, appearance: .dark) != light else { return nil }
+        if layer.plainFill, case .solid(var color) = light {
+            color.components[color.components.count - 1] = 1
+            return .solid(color)
+        }
+        return light
     }
 
     /// Resolves a fill for one appearance. "automatic" uses the unqualified
@@ -330,8 +381,8 @@ public enum IconComposerCompiler {
         // Color-1 is the extended-gray white. Backgrounds are allocated in
         // appearance order; a custom light fill is Gradient-1 and a layer
         // gradient after both backgrounds is Gradient-3.
-        var colors: [IconColor] = [IconColor(colorSpaceID: 6, components: [1, 1])]
-        var colorNames: [IconColor: String] = [:]
+        var colors: [IconColor] = [white]
+        var colorNames: [IconColor: String] = [white: "\(input.name)_Assets/Color-1"]
         func colorSlot(_ c: IconColor) -> String {
             if let known = colorNames[c] { return known }
             colors.append(c)
@@ -376,18 +427,15 @@ public enum IconComposerCompiler {
         // Backgrounds in appearance order, then layer fills. A custom light
         // fill is Gradient-1 and replaces system-light; a later layer gradient
         // is Gradient-3 because system-dark still occupies a slot.
-        func backgroundSlot(_ appearance: Appearance?) -> String {
-            if let fill = resolveFill(model.fills, appearance: appearance) {
-                if case .gradient(let top, let bottom) = fill {
-                    for preset in ["system-light", "system-dark"] {
-                        if case .gradient(let pt, let pb)? = presetFill(preset), pt == top, pb == bottom {
-                            return presetSlot(preset)
-                        }
-                    }
-                }
-                return fillSlot(fill)
+        // A fill equal to a preset gradient uses the preset's facet.
+        func namedFillSlot(_ fill: Fill) -> String {
+            for preset in ["system-light", "system-dark"] where fill == presetFill(preset) {
+                return presetSlot(preset)
             }
-            return presetSlot(appearance == .dark ? "system-dark" : "system-light")
+            return fillSlot(fill)
+        }
+        func backgroundSlot(_ appearance: Appearance?) -> String {
+            namedFillSlot(backgroundFill(model, appearance: appearance))
         }
         let backgroundNames = appearances.map { backgroundSlot($0) }
 
@@ -449,10 +497,9 @@ public enum IconComposerCompiler {
                     let image = images[layer.imageName]!
                     let rect = placedRect(image: image, layer: layer, group: group)
                     var name = fillName(layer, appearance)
-                    if name == nil, layer.fills.isEmpty, appearance == .dark,
-                       GlassRender.lightShape(image),
-                       let inherited = resolveFill(model.fills, appearance: nil) {
-                        name = fillSlot(inherited)
+                    if appearance == .dark, let inherited = automaticDarkFill(
+                        model, layer: layer, lightShape: GlassRender.lightShape(image)) {
+                        name = namedFillSlot(inherited)
                     }
                     return IconGroupLayer(
                         imageFacetName: "",
@@ -480,8 +527,10 @@ public enum IconComposerCompiler {
         var stackRenditions: [Rendition] = []
         for (appearance, backgroundName) in zip(appearances, backgroundNames) {
             let backgroundIdentifier = UInt16(FacetKeys.nameHash(backgroundName) & 0xFFFF)
+            // A solid background is a color facet (part 217), else a gradient (247).
+            let solid = if case .solid = backgroundFill(model, appearance: appearance) { true } else { false }
             var children = [IconStackChild(
-                part: 247, identifier: backgroundIdentifier,
+                part: solid ? RenditionKey.Part.color.rawValue : 247, identifier: backgroundIdentifier,
                 blurStrength: 0, translucency: 0, shadowStyle: 0, shadowOpacity: 0)]
             for groupFacet in groupFacets.reversed() {
                 children.append(IconStackChild(
@@ -502,10 +551,12 @@ public enum IconComposerCompiler {
 
         // Pre-rendered icons per appearance, keyed per idiom, plus the
         // MultiSized containers.
-        let idioms = input.idioms.map { Idiom(rawValue: $0) ?? .universal }
+        // macOS renders its own flat icon set (compileMacIcons): no iOS
+        // per-idiom pre-renders, so no render pass here.
+        let idioms = input.platform == "macosx" ? [] : input.idioms.map { Idiom(rawValue: $0) ?? .universal }
         var iconRenditions: [Rendition] = []
         var lightPixels: [UInt8] = []
-        for appearance in appearances {
+        for appearance in input.platform == "macosx" ? [] : appearances {
             let pixels = render(model: model, images: images, appearance: appearance)
             if appearance == nil { lightPixels = pixels }
             let renditionTag = renditionUUIDTag(name: input.name, appearance: appearance, pixels: pixels)
@@ -545,6 +596,13 @@ public enum IconComposerCompiler {
                 iconComposerSource: true,
                 body: .namedGradient(NamedGradientBody(
                     stopColorNames: gradient.stops.map { colorNames[$0]! }))))
+        }
+
+        if input.platform == "macosx" {
+            return try compileMacIcons(
+                input: input, model: model, images: images,
+                otherRenditions: colorRenditions + gradientRenditions + imageRenditions
+                    + groupRenditions + stackRenditions)
         }
 
         // Order the rendition list by rendition-key bytes: the CARWriter
@@ -603,6 +661,181 @@ public enum IconComposerCompiler {
             looseFiles: loose)
 
         return Result(renditions: renditions, appIconBundle: bundle)
+    }
+
+    /// macOS: the flat icon images Finder and the Dock draw (actool 27.0
+    /// macosx oracle). Seven Icon Image renditions for the system appearance
+    /// only, 16 to 512 pt at 2x and 1024 pt at 1x, Icon Index 1 to 7; one
+    /// MultiSized container listing the seven sizes; the `.icns`; and the
+    /// flat CFBundleIconFile/CFBundleIconName keys. The dark and tinted
+    /// looks come from the layered stack, as on Apple-built bundles.
+    static func compileMacIcons(
+        input: Input, model: IconModel, images: [String: LoadedImage], otherRenditions: [Rendition]
+    ) throws -> Result {
+        let straight = macIconCanvas(
+            straightRGBA(fromPremultipliedBGRA: render(model: model, images: images, appearance: nil)))
+        let light = premultipliedBGRA(fromStraightRGBA: straight)
+        var downsampled: [Int: [PNG.RGBA<UInt8>]] = [:]
+        func pixels(side: Int) -> [PNG.RGBA<UInt8>] {
+            if let cached = downsampled[side] { return cached }
+            let result = downsampleRGBA(straight, from: canvasSide, to: side)
+            downsampled[side] = result
+            return result
+        }
+        let sizes: [(points: Int, scale: Scale)] = [
+            (16, .x2), (32, .x2), (64, .x2), (128, .x2), (256, .x2), (512, .x2), (1024, .x1),
+        ]
+        var icons: [Rendition] = []
+        var sizeEntries: [MultiSizedBody.Size] = []
+        for (index, size) in sizes.enumerated() {
+            let side = size.points * size.scale.factor
+            let bitmap = side == canvasSide ? light : premultipliedBGRA(fromStraightRGBA: pixels(side: side))
+            icons.append(Rendition(
+                name: input.name, idiom: .universal, scale: size.scale,
+                appearance: nil,
+                iconComposerSource: true, iconIndex: UInt16(index + 1),
+                body: .bitmap(BitmapBody(
+                    width: UInt32(side), height: UInt32(side),
+                    pixelsBGRA: bitmap, colorSpaceID: 1, kind: .appIcon,
+                    renditionName:
+                        "\(input.name)\(size.points)x\(size.points)_NSAppearanceNameSystem_\(renditionUUIDTag(name: input.name, appearance: nil, pixels: bitmap)).png"))))
+            sizeEntries.append(.init(
+                pointWidth: UInt32(size.points), pointHeight: UInt32(size.points), iconIndex: UInt32(index + 1)))
+        }
+        let multiSized = Rendition(
+            name: input.name, idiom: .universal, scale: .x1,
+            body: .multiSized(MultiSizedBody(sizes: sizeEntries)))
+
+        var pngs: [Int: Data] = [:]
+        for side in [16, 32, 128, 256] {
+            pngs[side] = try pngData(pixels(side: side), side: side)
+        }
+        let bundle = AppIconBundle(
+            primaryIconName: input.name,
+            infoPlistAdditions: [
+                "CFBundleIconFile": input.name,
+                "CFBundleIconName": input.name,
+            ] as [String: any Sendable],
+            looseFiles: [LooseFile(
+                name: "\(input.name).icns",
+                data: try IcnsWriter.write(iconName: input.name, pngs: pngs))])
+        return Result(renditions: otherRenditions + icons + [multiSized], appIconBundle: bundle)
+    }
+
+    /// The macOS app icon on its 1024 px canvas, from the full-bleed design
+    /// render: the design scaled to an 824 px body at (100, 100), a rounded
+    /// rectangle with 186 px corners, over a black drop shadow (Gaussian,
+    /// sigma 16, 8 px down, opacity 0.248). Fitted to actool 27.0's flat
+    /// 1024 px icon: the body edge matches to under half a pixel on
+    /// average. macOS before 26 draws these flat images as they are.
+    static func macIconCanvas(_ design: [PNG.RGBA<UInt8>]) -> [PNG.RGBA<UInt8>] {
+        let n = canvasSide, origin = 100, side = 824, radius = 186.0
+        let body = downsampleRGBA(design, from: n, to: side)
+
+        // Body coverage, 4x4 supersampled.
+        var coverage = [Float](repeating: 0, count: side * side)
+        let half = Double(side) / 2, inner = half - radius
+        for y in 0..<side {
+            for x in 0..<side {
+                var hits = 0
+                for sy in 0..<4 {
+                    for sx in 0..<4 {
+                        let px = abs(Double(x) + (Double(sx) + 0.5) / 4 - half) - inner
+                        let py = abs(Double(y) + (Double(sy) + 0.5) / 4 - half) - inner
+                        let qx = max(px, 0), qy = max(py, 0)
+                        if qx * qx + qy * qy <= radius * radius { hits += 1 }
+                    }
+                }
+                coverage[y * side + x] = Float(hits) / 16
+            }
+        }
+
+        // Shadow: the coverage 8 px lower, blurred (separable Gaussian).
+        var shadow = [Float](repeating: 0, count: n * n)
+        for y in 0..<side {
+            for x in 0..<side {
+                shadow[(y + origin + 8) * n + x + origin] = coverage[y * side + x]
+            }
+        }
+        let sigma: Float = 16, reach = 48
+        let kernel = (-reach...reach).map { exp(-Float($0 * $0) / (2 * sigma * sigma)) }
+        let total = kernel.reduce(0, +)
+        let weights = kernel.map { $0 / total }
+        var pass = [Float](repeating: 0, count: n * n)
+        for y in 0..<n {
+            for x in 0..<n {
+                var sum: Float = 0
+                for k in -reach...reach where x + k >= 0 && x + k < n {
+                    sum += shadow[y * n + x + k] * weights[k + reach]
+                }
+                pass[y * n + x] = sum
+            }
+        }
+        for y in 0..<n {
+            for x in 0..<n {
+                var sum: Float = 0
+                for k in -reach...reach where y + k >= 0 && y + k < n {
+                    sum += pass[(y + k) * n + x] * weights[k + reach]
+                }
+                shadow[y * n + x] = sum * 0.248
+            }
+        }
+
+        // Body over the black shadow, straight alpha.
+        var out = [PNG.RGBA<UInt8>]()
+        out.reserveCapacity(n * n)
+        for y in 0..<n {
+            for x in 0..<n {
+                let bx = x - origin, by = y - origin
+                var bodyAlpha: Float = 0
+                var color = (r: Float(0), g: Float(0), b: Float(0))
+                if bx >= 0, bx < side, by >= 0, by < side {
+                    let p = body[by * side + bx]
+                    bodyAlpha = coverage[by * side + bx] * Float(p.a) / 255
+                    color = (Float(p.r), Float(p.g), Float(p.b))
+                }
+                let a = bodyAlpha + shadow[y * n + x] * (1 - bodyAlpha)
+                func channel(_ c: Float) -> UInt8 {
+                    a <= 0 ? 0 : UInt8(min(255, (c * bodyAlpha / a).rounded()))
+                }
+                out.append(PNG.RGBA(channel(color.r), channel(color.g), channel(color.b),
+                                    UInt8(min(255, (a * 255).rounded()))))
+            }
+        }
+        return out
+    }
+
+    /// Straight-alpha RGBA from premultiplied BGRA (the render's format).
+    static func straightRGBA(fromPremultipliedBGRA bgra: [UInt8]) -> [PNG.RGBA<UInt8>] {
+        stride(from: 0, to: bgra.count, by: 4).map { i in
+            let a = Int(bgra[i + 3])
+            func un(_ c: UInt8) -> UInt8 { a == 0 ? 0 : UInt8(min(255, Int(c) * 255 / a)) }
+            return PNG.RGBA(un(bgra[i + 2]), un(bgra[i + 1]), un(bgra[i]), bgra[i + 3])
+        }
+    }
+
+    /// Premultiplied BGRA (BitmapBody's format) from straight-alpha RGBA.
+    static func premultipliedBGRA(fromStraightRGBA rgba: [PNG.RGBA<UInt8>]) -> [UInt8] {
+        var out = [UInt8]()
+        out.reserveCapacity(rgba.count * 4)
+        for p in rgba {
+            let a = Int(p.a)
+            out.append(UInt8(Int(p.b) * a / 255))
+            out.append(UInt8(Int(p.g) * a / 255))
+            out.append(UInt8(Int(p.r) * a / 255))
+            out.append(p.a)
+        }
+        return out
+    }
+
+    static func pngData(_ rgba: [PNG.RGBA<UInt8>], side: Int) throws -> Data {
+        let image = PNG.Image(
+            packing: rgba, size: (side, side), layout: .init(format: .rgba8(palette: [], fill: nil)))
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("iconcomposer-\(UUID().uuidString).png").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        try image.compress(path: path, level: 9)
+        return try Data(contentsOf: URL(fileURLWithPath: path))
     }
 
     static func appearanceNameTag(_ appearance: Appearance?) -> String {

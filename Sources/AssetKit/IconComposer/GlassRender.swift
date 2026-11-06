@@ -485,7 +485,14 @@ enum GlassRender {
                        appearance: Appearance?) -> [UInt8] {
         typealias C = IconComposerCompiler
         let tinted = appearance == .tinted
-        let fillForRim = tinted ? nil : C.resolveFill(model.fills, appearance: appearance)
+        var fillForRim = tinted ? nil : Optional(C.backgroundFill(model, appearance: appearance))
+        if case .solid(let color)? = fillForRim, color.components.last == 0 {
+            // A clear background renders as a fixed gray gradient in light and
+            // as system-dark in dark (actool 27.0 flat images, iOS and macOS).
+            fillForRim = appearance == .dark ? C.presetFill("system-dark")
+                : .gradient(C.IconColor(colorSpaceID: 2, components: [0.886, 1]),
+                            C.IconColor(colorSpaceID: 2, components: [0.753, 1]))
+        }
         var canvas = Image(fill: 0, 0, 0, 1)
         if let fill = fillForRim {
             let (top, bottom): (C.IconColor, C.IconColor)
@@ -516,8 +523,8 @@ enum GlassRender {
                 let (ox, oy, pw, ph) = (rect.ox, rect.oy, rect.w, rect.h)
                 var placed = place(image, size: (pw, ph), origin: (ox, oy))
                 var fill = C.resolveFill(layer.fills, appearance: appearance)
-                if fill == nil, layer.fills.isEmpty, appearance == .dark, lightShape(image),
-                   let inherited = C.resolveFill(model.fills, appearance: nil) {
+                if appearance == .dark,
+                   let inherited = C.automaticDarkFill(model, layer: layer, lightShape: lightShape(image)) {
                     fill = inherited
                     let peak = placed.a.max() ?? 0
                     if peak > 0.05 {

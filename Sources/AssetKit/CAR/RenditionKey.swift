@@ -207,24 +207,29 @@ struct RenditionKey: Hashable, Sendable {
     func encode(format: [AttributeID]) -> Data {
         var w = ByteWriter()
         for attribute in format {
-            switch attribute {
-            case .appearance: w.writeLE(appearance)
-            case .localization: w.writeLE(localization)
-            case .scale: w.writeLE(scale)
-            case .idiom: w.writeLE(idiom)
-            case .subtype: w.writeLE(subtype)
-            case .dimension2: w.writeLE(dimension2)
-            case .dimension1: w.writeLE(UInt16(0))
-            case .deploymentTarget: w.writeLE(deploymentTarget)
-            case .glyphWeight: w.writeLE(glyphWeight)
-            case .glyphSize: w.writeLE(glyphSize)
-            case .displayGamut: w.writeLE(displayGamut)
-            case .identifier: w.writeLE(identifier)
-            case .element: w.writeLE(element)
-            case .part: w.writeLE(part)
-            }
+            w.writeLE(value(of: attribute))
         }
         return w.data
+    }
+
+    /// The key's token for one attribute (0 for attributes it never sets).
+    func value(of attribute: AttributeID) -> UInt16 {
+        switch attribute {
+        case .appearance: return appearance
+        case .localization: return localization
+        case .scale: return scale
+        case .idiom: return idiom
+        case .subtype: return subtype
+        case .dimension2: return dimension2
+        case .dimension1, .size, .layer: return 0
+        case .deploymentTarget: return deploymentTarget
+        case .glyphWeight: return glyphWeight
+        case .glyphSize: return glyphSize
+        case .displayGamut: return displayGamut
+        case .identifier: return identifier
+        case .element: return element
+        case .part: return part
+        }
     }
 
     /// Decodes a key packed in `v1KeyFormat` order. Returns nil for other

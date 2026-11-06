@@ -28,8 +28,20 @@ struct CARWriter: Sendable {
     /// BITMAPKEYS descriptors with the `dimension1` attribute (macOS 26
     /// CoreUI resolves nothing from a car in the iOS 12-attribute schema).
     var macSchema = false
+    /// True for a `--platform macosx` catalog with an Icon Composer `.icon`:
+    /// the classic macOS layout actool 27.0 writes for every macosx catalog
+    /// (keySemantics 1, `classicMacKeyOrder`, NSAppearance names, platform
+    /// "macosx", one BITMAPKEYS row per facet). macOS ignores an `.icon`
+    /// compiled in the iOS layout and shows the generic app icon.
+    var classicMacSchema = false
 
     func write() throws -> Data {
+        try compile().data
+    }
+
+    /// The car's bytes, and the warnings about the renditions (assets whose
+    /// renditions share a rendition key).
+    func compile() throws -> (data: Data, warnings: [CompileWarning]) {
         var bom = BOMWriter()
 
         let layout = CARLayout(renditions: renditions)
@@ -38,16 +50,25 @@ struct CARWriter: Sendable {
         // use: the base eight, plus dimension2 when some rendition carries
         // an Icon Index (app icons), plus appearance / displayGamut when
         // dark or tinted icon variants widen the tuple.
-        let keyFormat = KeyFormat.format(for: renditions, macSchema: macSchema)
+        let keyFormat = classicMacSchema
+            ? KeyFormat.classicMac(for: renditions)
+            : KeyFormat.format(for: renditions, macSchema: macSchema)
 
         // ---- Tree contents ----
         let renditionData: [(key: Data, value: Data)] = renditions.map { rendition in
-            (RenditionKey(rendition: rendition).encode(format: keyFormat), csiData(for: rendition))
+            (renditionKey(rendition).encode(format: keyFormat), csiData(for: rendition))
+        }
+        let warnings = Self.duplicateKeyAssets(renditions.map(\.name), keys: renditionData.map(\.key)).map {
+            CompileWarning(
+                path: $0, message: "The asset has renditions with the same rendition key; CoreUI resolves only one of them")
         }
         let facetData: [(key: Data, value: Data)] = layout.assets
-            .map { asset in (Data(asset.name.utf8), FacetKeys.value(for: asset.name, kind: asset.kind)) }
+            .map { asset in (Data(asset.name.utf8), FacetKeys.value(for: asset.name, kind: facetKind(asset))) }
             .sorted { BOMTree.byteCompare($0.key, $1.key) < 0 }
-        let appearanceData: [(key: Data, value: Data)] = AppearanceKeys.entries(used: layout.usedAppearances)
+        let appearanceData: [(key: Data, value: Data)] = (classicMacSchema
+            ? AppearanceKeys.macEntries(used: Set(layout.usedAppearances.map {
+                $0 == AppearanceKeys.light ? AppearanceKeys.aqua : $0 }))
+            : AppearanceKeys.entries(used: layout.usedAppearances))
             .map { (key: $0.key, value: $0.value) }
             .sorted { BOMTree.byteCompare($0.key, $1.key) < 0 }
         let bitmapData: [(key: Data, value: Data)] = bitmapEntries(layout: layout, keyFormat: keyFormat)
@@ -75,7 +96,8 @@ struct CARWriter: Sendable {
         let bitmapValueIDs = (0..<bitmapData.count).map { _ in take() }
 
         // ---- Blocks ----
-        bom.addBlock(CARHeaderBlock.data(renditionCount: UInt32(renditions.count)))
+        bom.addBlock(CARHeaderBlock.data(
+            renditionCount: UInt32(renditions.count), keySemantics: classicMacSchema ? 1 : 2))
 
         // The RENDITIONS header and first leaf are filled in at the end: with more entries than a
         // page holds, the leaves link forward to pages (and a branch) appended after every other block.
@@ -130,7 +152,9 @@ struct CARWriter: Sendable {
             bom.addBlock(entry.key)
             bom.addBlock(entry.value)
         }
-        bom.addBlock(ExtendedMetadata.data(deploymentTarget: deploymentTarget))
+        bom.addBlock(ExtendedMetadata.data(
+            deploymentTarget: deploymentTarget,
+            platform: classicMacSchema ? "macosx" : ExtendedMetadata.defaultPlatform))
 
         if !bitmapData.isEmpty {
             bom.addBlock(Data()) // header, set below
@@ -210,14 +234,57 @@ struct CARWriter: Sendable {
             bom.setVariable("BITMAPKEYS", blockID: bitmapTreeHeaderID)
         }
 
-        return bom.finalize()
+        return (bom.finalize(), warnings)
+    }
+
+    /// Names of the assets that have two renditions with the same key. AssetKit
+    /// does not key some variants (a "light" appearance next to "any", locale,
+    /// high contrast), so those collide; the writer keeps them as before and
+    /// warns (CoreUI resolves only one entry per key).
+    static func duplicateKeyAssets(_ names: [String], keys: [Data]) -> [String] {
+        var seen = Set<Data>(), duplicates: [String] = []
+        for (name, key) in zip(names, keys) where !seen.insert(key).inserted && !duplicates.contains(name) {
+            duplicates.append(name)
+        }
+        return duplicates
+    }
+
+    /// The rendition key; a classic macOS car keys the light appearance as
+    /// NSAppearanceNameAqua (8) instead of iOS's UIAppearanceLight (4).
+    private func renditionKey(_ rendition: Rendition) -> RenditionKey {
+        var key = RenditionKey(rendition: rendition)
+        if classicMacSchema, key.appearance == AppearanceKeys.light {
+            key.appearance = AppearanceKeys.aqua
+        }
+        return key
+    }
+
+    private func facetKind(_ asset: AssetFacts) -> FacetKeys.Kind {
+        guard classicMacSchema else { return asset.kind }
+        let hasStack = asset.renditions.contains {
+            if case .iconImageStack = $0.body { return true }
+            return false
+        }
+        return hasStack ? .iconStack : asset.kind
     }
 
     /// BITMAPKEYS entries: inline u32 key = NameIdentifier (big-endian 4
-    /// bytes), value = the 52/48-byte descriptor. Color-only assets produce
-    /// no row.
+    /// bytes), value = the descriptor. iOS: color-only assets produce no
+    /// row. Classic macOS: every facet has a row.
     private func bitmapEntries(layout: CARLayout, keyFormat: [AttributeID]) -> [(key: Data, value: Data)] {
-        layout.assets.compactMap { asset in
+        if classicMacSchema {
+            return layout.assets.map { asset in
+                let identifier = UInt32(FacetKeys.nameHash(asset.name) & 0xFFFF)
+                return (key: Data([
+                    UInt8(truncatingIfNeeded: identifier >> 24),
+                    UInt8(truncatingIfNeeded: identifier >> 16),
+                    UInt8(truncatingIfNeeded: identifier >> 8),
+                    UInt8(truncatingIfNeeded: identifier),
+                ]), value: BitmapKeys.classicMacDescriptor(
+                    keys: asset.renditions.map(renditionKey), keyFormat: keyFormat))
+            }
+        }
+        return layout.assets.compactMap { asset in
             guard let descriptor = BitmapKeys.descriptor(
                 forAsset: asset.name,
                 renditions: asset.renditions,

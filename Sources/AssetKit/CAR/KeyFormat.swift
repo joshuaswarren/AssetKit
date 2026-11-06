@@ -8,6 +8,8 @@ import Foundation
 enum AttributeID: UInt32 {
     case element = 1
     case part = 2
+    case size = 3
+    case layer = 11
     case appearance = 7
     case dimension2 = 9
     case dimension1 = 8
@@ -77,7 +79,59 @@ let canonicalKeyOrder: [AttributeID] = [
     .part,
 ]
 
+/// The classic macOS key order (keySemantics 1). actool 27.0 compiles every
+/// `--platform macosx` catalog in it: [7, 13, 1, 2, 3, 17, 9, 11, 12], with
+/// dimension2 only when an app icon carries Icon Indexes or a symbol its
+/// Glyph Cached Index (oracle: a real-world `.icon`, alone and with an
+/// imageset and a colorset; a plain macosx catalog drops dimension2). No
+/// idiom or subtype slot. Symbols append deploymentTarget, glyphWeight and
+/// glyphSize after scale (oracle: a symbolset, alone and with the `.icon`:
+/// [7, 13, 1, 2, 3, 17, 9, 11, 12, 25, 26, 27]).
+let classicMacKeyOrder: [AttributeID] = [
+    .appearance,
+    .localization,
+    .element,
+    .part,
+    .size,
+    .identifier,
+    .dimension2,
+    .layer,
+    .scale,
+]
+
 enum KeyFormat {
+    /// KEYFORMAT for a classic macOS catalog (see `classicMacKeyOrder`).
+    static func classicMac(for renditions: [Rendition]) -> [AttributeID] {
+        let usesDimension2 = renditions.contains { rendition in
+            switch rendition.body {
+            case .bitmap(let body): return body.kind == .appIcon
+            case .symbolCached: return true
+            default: return false
+            }
+        }
+        let usesGlyphs = renditions.contains {
+            switch $0.body {
+            case .symbolVector, .symbolCached, .symbolPacked: return true
+            default: return false
+            }
+        }
+        var format = classicMacKeyOrder.filter { $0 != .dimension2 || usesDimension2 }
+        // P3 variants append displayGamut after scale (oracle: an imageset
+        // with sRGB and display-P3 entries, with and without the `.icon`:
+        // [.., 11, 12, 24]). Its rank next to the symbol attributes is not
+        // verified; ascending id order is assumed.
+        if renditions.contains(where: { $0.gamut == .displayP3 }) {
+            format.append(.displayGamut)
+        }
+        if usesGlyphs || renditions.contains(where: { $0.deploymentTarget != nil }) {
+            format.append(.deploymentTarget)
+        }
+        if usesGlyphs {
+            format += [.glyphWeight, .glyphSize]
+        }
+        return format
+    }
+
     /// The catalog's KEYFORMAT: the attributes this catalog's renditions
     /// actually use, in `canonicalKeyOrder`. actool includes `dimension2`
     /// when app icons are present, `displayGamut` when a rendition carries a

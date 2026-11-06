@@ -1,0 +1,57 @@
+{
+  "groups": [
+    {
+      "layers": [
+        {
+          "image-name": "ring.svg",
+          "name": "ring",
+          "fill": {
+            "linear-gradient": [
+              "display-p3:1.00000,1.00000,1.00000,1.00000",
+              "display-p3:0.80000,0.90000,1.00000,1.00000"
+            ],
+            "orientation": {
+              "start": {
+                "x": 0.5,
+                "y": 0
+              },
+              "stop": {
+                "x": 0.5,
+                "y": 1
+              }
+            }
+          }
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.2
+      }
+    },
+    {
+      "layers": [
+        {
+          "image-name": "dot.svg",
+          "name": "dot"
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.5
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS"
+    ]
+  }
+}

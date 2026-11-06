@@ -24,6 +24,47 @@ import Foundation
 /// pass `--validate-file` match this rule field for field, and the 46 that
 /// fail each differ in at least one field.
 enum BitmapKeys {
+    /// The classic macOS descriptor (actool 27.0 macosx oracles): a header
+    /// [1, 0, (n + 1) * 4, n], then one u32 per KEYFORMAT attribute. The
+    /// attributes that name the asset (appearance, element, part, identifier)
+    /// are -1; every other column is the bit mask of the values the facet's
+    /// rendition keys use, OR of (1 << value). Examples from Apple's cars:
+    /// scale 1x = 2, 1x + 2x = 6; an Icon Composer icon's dimension2 (Icon
+    /// Index 0 to 7) = 255, a mac appiconset's (0 to 5) = 63, a symbol's
+    /// (0 to 2) = 7; display gamut sRGB + P3 = 3; a symbol's deployment
+    /// target 5 = 0x20, glyph weight 4 = 0x10, glyph size 2 = 4. Every facet
+    /// gets a row, colors included.
+    static func classicMacDescriptor(keys: [RenditionKey], keyFormat: [AttributeID]) -> Data {
+        var w = ByteWriter()
+        w.writeLE(UInt32(1))
+        w.writeLE(UInt32(0))
+        w.writeLE(UInt32((keyFormat.count + 1) * 4))
+        w.writeLE(UInt32(keyFormat.count))
+        let masks = valueMasks(keys: keys.map { $0.encode(format: keyFormat) }, count: keyFormat.count)
+        for (attribute, mask) in zip(keyFormat, masks) {
+            switch attribute {
+            case .appearance, .element, .part, .identifier:
+                w.writeLE(UInt32(0xFFFFFFFF))
+            default:
+                w.writeLE(mask == 0 ? UInt32(1) : mask)
+            }
+        }
+        return w.data
+    }
+
+    /// Per KEYFORMAT position: the OR of `1 << token` over the encoded
+    /// rendition keys. Tokens of 32 or more have no bit and are skipped.
+    static func valueMasks(keys: [Data], count: Int) -> [UInt32] {
+        var masks = [UInt32](repeating: 0, count: count)
+        for key in keys {
+            for index in masks.indices {
+                let token = UInt32(key[key.startIndex + index * 2]) | UInt32(key[key.startIndex + index * 2 + 1]) << 8
+                if token < 32 { masks[index] |= 1 << token }
+            }
+        }
+        return masks
+    }
+
     struct Descriptor {
         /// The catalog's KEYFORMAT. Its length drives hdrSize/keyLen/size.
         var keyFormat: [AttributeID]
@@ -91,14 +132,7 @@ enum BitmapKeys {
         }
         guard hasDescribableRendition else { return nil }
 
-        var masks = [UInt32](repeating: 0, count: keyFormat.count)
-        for rendition in renditions {
-            let key = RenditionKey(rendition: rendition).encode(format: keyFormat)
-            for index in masks.indices {
-                let token = UInt32(key[key.startIndex + index * 2]) | UInt32(key[key.startIndex + index * 2 + 1]) << 8
-                if token < 32 { masks[index] |= 1 << token }
-            }
-        }
-        return Descriptor(keyFormat: keyFormat, masks: masks)
+        let keys = renditions.map { RenditionKey(rendition: $0).encode(format: keyFormat) }
+        return Descriptor(keyFormat: keyFormat, masks: valueMasks(keys: keys, count: keyFormat.count))
     }
 }

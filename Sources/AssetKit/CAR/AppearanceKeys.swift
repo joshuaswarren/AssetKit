@@ -26,6 +26,27 @@ enum AppearanceKeys {
     /// NNW single-size oracle car's APPEARANCEKEYS tree
     /// ("ISAppearanceTintable" -> 0x000A).
     static let tintable: UInt16 = 10
+    /// macOS light appearance ("NSAppearanceNameAqua"). A classic macOS car
+    /// keys light Icon Composer renditions at 8 where iOS uses 4 (actool
+    /// 27.0 macosx oracle, a real-world `.icon`).
+    static let aqua: UInt16 = 8
+
+    /// macOS APPEARANCEKEYS rows: NSAppearanceNameSystem (0) is the default,
+    /// dark is NSAppearanceNameDarkAqua (1), light NSAppearanceNameAqua (8).
+    /// `used` holds macOS tokens (light already remapped to `aqua`).
+    static func macEntries(used: Set<UInt16>) -> [BOMTree.Entry] {
+        var rows = [BOMTree.Entry(key: Data("NSAppearanceNameSystem".utf8), value: encodeID(any))]
+        if used.contains(dark) {
+            rows.append(BOMTree.Entry(key: Data("NSAppearanceNameDarkAqua".utf8), value: encodeID(dark)))
+        }
+        if used.contains(aqua) {
+            rows.append(BOMTree.Entry(key: Data("NSAppearanceNameAqua".utf8), value: encodeID(aqua)))
+        }
+        if used.contains(tintable) {
+            rows.append(BOMTree.Entry(key: Data("ISAppearanceTintable".utf8), value: encodeID(tintable)))
+        }
+        return rows
+    }
 
     static func entries(used: Set<UInt16>) -> [BOMTree.Entry] {
         var rows: [BOMTree.Entry] = []
