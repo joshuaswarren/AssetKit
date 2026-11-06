@@ -64,7 +64,8 @@ struct AssetutilParseTests {
         try assertHeader(entries.first)
 
         let renditions = entries.dropFirst().filter { $0["AssetType"] as? String == "Icon Image" }
-        #expect(renditions.count == 2, "expected two raw Icon Image renditions (@2x and @3x)")
+        // actool from Xcode 27.2 (27B52) writes 3 Icon Image renditions for this fixture.
+        #expect(renditions.count == 3, "expected three raw Icon Image renditions")
 
         for (i, rendition) in renditions.enumerated() {
             #expect(rendition["Idiom"] as? String == "phone", "rendition[\(i)] idiom")
