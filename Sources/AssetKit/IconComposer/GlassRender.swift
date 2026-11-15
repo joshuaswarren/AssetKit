@@ -499,6 +499,9 @@ enum GlassRender {
             switch fill {
             case .solid(let c): (top, bottom) = (c, c)
             case .gradient(let a, let b): (top, bottom) = (a, b)
+            // actool 27.2 shades an automatic gradient from its color (a
+            // lighter top for a dark color); the flat image uses the color.
+            case .automaticGradient(let c): (top, bottom) = (c, c)
             }
             let c0 = p3(top), c1 = p3(bottom)
             for y in 0..<n {
@@ -536,7 +539,7 @@ enum GlassRender {
                         let t = sat((Float(y - oy) + 0.5) / Float(ph))
                         let c: (Float, Float, Float, Float)
                         switch fill {
-                        case .solid(let s): c = p3(s)
+                        case .solid(let s), .automaticGradient(let s): c = p3(s)
                         case .gradient(let a, let b):
                             let p = p3(a), q = p3(b), e = t * t * (3 - 2 * t)
                             let al = p.3 + (q.3 - p.3) * e, k = 1 / max(al, 1e-6)

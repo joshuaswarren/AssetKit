@@ -46,10 +46,15 @@ public enum IconComposerCompiler {
         var components: [Double]
     }
 
-    /// A resolved fill: a color, or two stop colors (vertical gradient).
+    /// A resolved fill: a color, two stop colors (vertical gradient), or
+    /// Icon Composer's automatic gradient from one color.
     enum Fill: Hashable {
         case solid(IconColor)
         case gradient(IconColor, IconColor)
+        /// `{"automatic-gradient": color}`. actool 27.2 writes it as a named
+        /// gradient with one stop (the source color); the system derives
+        /// the shading at draw time.
+        case automaticGradient(IconColor)
     }
 
     /// The three appearances actool compiles for an .icon app icon.
@@ -213,7 +218,7 @@ public enum IconComposerCompiler {
     /// iphoneos oracles): the resolved fill; else system-dark in dark, white
     /// for an icon.json without any fill, system-light for "automatic".
     static func backgroundFill(_ model: IconModel, appearance: Appearance?) -> Fill {
-        if let fill = resolveFill(model.fills, appearance: appearance) { return fill }
+        if let fill = resolveFill(model.fills, appearance: appearance, background: true) { return fill }
         if appearance == .dark { return presetFill("system-dark")! }
         return model.fills.isEmpty ? .solid(white) : presetFill("system-light")!
     }
@@ -236,13 +241,17 @@ public enum IconComposerCompiler {
 
     /// Resolves a fill for one appearance. "automatic" uses the unqualified
     /// fill (Alt1 dark stores the default white). No unqualified fill means
-    /// no overlay (IceCubes front dark).
-    static func resolveFill(_ specializations: [[String: Any]], appearance: Appearance?) -> Fill? {
+    /// no overlay (IceCubes front dark). `automatic-gradient` is read for the
+    /// background only (actool 27.2 oracle); a layer's own automatic gradient
+    /// is not checked against actool and stays unfilled, as before.
+    static func resolveFill(
+        _ specializations: [[String: Any]], appearance: Appearance?, background: Bool = false
+    ) -> Fill? {
         guard let value = specializedValue(specializations, appearance: appearance) else { return nil }
         if let name = value as? String {
             if name == "automatic" {
                 guard appearance != nil else { return nil }
-                return resolveFill(specializations, appearance: nil)
+                return resolveFill(specializations, appearance: nil, background: background)
             }
             return presetFill(name)
         }
@@ -253,6 +262,9 @@ public enum IconComposerCompiler {
         if let stops = dict["linear-gradient"] as? [String], stops.count >= 2,
            let top = parseColor(stops[0]), let bottom = parseColor(stops[1]) {
             return Fill.gradient(top, bottom)
+        }
+        if background, let color = dict["automatic-gradient"] as? String {
+            return parseColor(color).map { Fill.automaticGradient($0) }
         }
         return nil
     }
@@ -419,6 +431,10 @@ public enum IconComposerCompiler {
                 _ = colorSlot(bottom)
                 name = "\(input.name)_Assets/Gradient-\(gradientFacets.count + 1)"
                 gradientFacets.append((name, [top, bottom]))
+            case .automaticGradient(let color):
+                _ = colorSlot(color)
+                name = "\(input.name)_Assets/Gradient-\(gradientFacets.count + 1)"
+                gradientFacets.append((name, [color]))
             }
             fillNames[fill] = name
             return name
