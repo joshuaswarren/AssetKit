@@ -57,6 +57,38 @@ enum GlassRender {
         }
     }
 
+    // MARK: automatic gradient
+
+    /// Lighten weights of the dark branch by the base color's OKLab
+    /// lightness: a white screen blend in P3 gamma.
+    static let automaticLighten: [(Float, Float)] = [(0.37, 0.20), (0.46, 0.25), (0.60, 0.25), (0.68, 0.31), (0.83, 0.31)]
+
+    /// The flat-image stops of an `automatic-gradient` fill: (position on
+    /// the 102.4...921.6 px axis, P3 gamma color + alpha). Fitted to the
+    /// 1024 px images of actool 27.2 for 20 single-color probes: a base with
+    /// OKLab L <= 0.83 gets a lighter top (base screened with white, weight
+    /// 0.20 for dark bases up to 0.31) at 0.0 and the base at 0.7; a lighter
+    /// base stays at 0.3 and darkens by 10% at 1.0. Within 2/255 of actool on
+    /// gray and near-gray bases; saturated bases differ by 5 to 12/255 mean.
+    static func automaticStops(_ base: IconComposerCompiler.IconColor) -> [(Float, (Float, Float, Float, Float))] {
+        let p = p3(base)
+        let s = convert((p.0, p.1, p.2), p3ToSRGB)
+        let (r, g, b) = (toLinear(s.0), toLinear(s.1), toLinear(s.2))
+        let l = cbrtf(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+        let m = cbrtf(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+        let q = cbrtf(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+        let lightness = 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * q
+        if lightness > 0.83 {
+            return [(0.3, p), (1.0, (p.0 * 0.9, p.1 * 0.9, p.2 * 0.9, p.3))]
+        }
+        var k = automaticLighten[0].1
+        for (lo, hi) in zip(automaticLighten, automaticLighten.dropFirst()) where lightness > lo.0 {
+            k = lo.1 + (hi.1 - lo.1) * min(1, (lightness - lo.0) / (hi.0 - lo.0))
+        }
+        let top = (p.0 + k * (1 - p.0), p.1 + k * (1 - p.1), p.2 + k * (1 - p.2), p.3)
+        return [(0.0, top), (0.7, p)]
+    }
+
     // MARK: resampling and placement
 
     static func keys(_ x: Float) -> Float {
@@ -495,14 +527,15 @@ enum GlassRender {
         }
         var canvas = Image(fill: 0, 0, 0, 1)
         if let fill = fillForRim {
-            let (top, bottom): (C.IconColor, C.IconColor)
+            let stops: [(Float, (Float, Float, Float, Float))]
             switch fill {
-            case .solid(let c): (top, bottom) = (c, c)
-            case .gradient(let a, let b): (top, bottom) = (a, b)
+            case .solid(let c): stops = [(0, p3(c)), (1, p3(c))]
+            case .gradient(let a, let b): stops = [(0, p3(a)), (1, p3(b))]
+            case .automatic(let base): stops = automaticStops(base)
             }
-            let c0 = p3(top), c1 = p3(bottom)
+            let (t0, c0) = stops[0], (t1, c1) = stops[1]
             for y in 0..<n {
-                let t = sat((Float(y) + 0.5 - 102.4) / 819.2)
+                let t = sat(((Float(y) + 0.5 - 102.4) / 819.2 - t0) / (t1 - t0))
                 let r = c0.0 + (c1.0 - c0.0) * t, g = c0.1 + (c1.1 - c0.1) * t, b = c0.2 + (c1.2 - c0.2) * t
                 for x in 0..<n { canvas.r[y * n + x] = r; canvas.g[y * n + x] = g; canvas.b[y * n + x] = b }
             }
@@ -537,6 +570,11 @@ enum GlassRender {
                         let c: (Float, Float, Float, Float)
                         switch fill {
                         case .solid(let s): c = p3(s)
+                        case .automatic(let base):
+                            let stops = automaticStops(base)
+                            let u = sat((t - stops[0].0) / (stops[1].0 - stops[0].0))
+                            let p = stops[0].1, q = stops[1].1
+                            c = (p.0 + (q.0 - p.0) * u, p.1 + (q.1 - p.1) * u, p.2 + (q.2 - p.2) * u, p.3)
                         case .gradient(let a, let b):
                             let p = p3(a), q = p3(b), e = t * t * (3 - 2 * t)
                             let al = p.3 + (q.3 - p.3) * e, k = 1 / max(al, 1e-6)

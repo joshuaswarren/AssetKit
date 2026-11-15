@@ -46,10 +46,15 @@ public enum IconComposerCompiler {
         var components: [Double]
     }
 
-    /// A resolved fill: a color, or two stop colors (vertical gradient).
+    /// A resolved fill: a color, two stop colors (vertical gradient), or
+    /// Icon Composer's automatic gradient of one color.
     enum Fill: Hashable {
         case solid(IconColor)
         case gradient(IconColor, IconColor)
+        /// `{"automatic-gradient": color}`. actool 27.x stores it as a named
+        /// gradient with one stop and gradient type 0; the device derives the
+        /// lighter (or darker) second color itself.
+        case automatic(IconColor)
     }
 
     /// The three appearances actool compiles for an .icon app icon.
@@ -250,6 +255,9 @@ public enum IconComposerCompiler {
         if let solid = dict["solid"] as? String {
             return parseColor(solid).map { Fill.solid($0) }
         }
+        if let base = dict["automatic-gradient"] as? String {
+            return parseColor(base).map { Fill.automatic($0) }
+        }
         if let stops = dict["linear-gradient"] as? [String], stops.count >= 2,
            let top = parseColor(stops[0]), let bottom = parseColor(stops[1]) {
             return Fill.gradient(top, bottom)
@@ -391,7 +399,7 @@ public enum IconComposerCompiler {
             return name
         }
 
-        var gradientFacets: [(facet: String, stops: [IconColor])] = []
+        var gradientFacets: [(facet: String, stops: [IconColor], automatic: Bool)] = []
         func presetSlot(_ preset: String) -> String {
             let fill = presetFill(preset)!
             if case .gradient(let top, let bottom) = fill {
@@ -401,7 +409,7 @@ public enum IconComposerCompiler {
                 _ = colorSlot(top)
                 _ = colorSlot(bottom)
                 let facet = "\(input.name)_Assets/\(preset)"
-                gradientFacets.append((facet, [top, bottom]))
+                gradientFacets.append((facet, [top, bottom], false))
                 return facet
             }
             fatalError("preset fills are gradients")
@@ -418,7 +426,11 @@ public enum IconComposerCompiler {
                 _ = colorSlot(top)
                 _ = colorSlot(bottom)
                 name = "\(input.name)_Assets/Gradient-\(gradientFacets.count + 1)"
-                gradientFacets.append((name, [top, bottom]))
+                gradientFacets.append((name, [top, bottom], false))
+            case .automatic(let base):
+                _ = colorSlot(base)
+                name = "\(input.name)_Assets/Gradient-\(gradientFacets.count + 1)"
+                gradientFacets.append((name, [base], true))
             }
             fillNames[fill] = name
             return name
@@ -595,7 +607,8 @@ public enum IconComposerCompiler {
                 name: gradient.facet, idiom: .universal, scale: .x1,
                 iconComposerSource: true,
                 body: .namedGradient(NamedGradientBody(
-                    stopColorNames: gradient.stops.map { colorNames[$0]! }))))
+                    stopColorNames: gradient.stops.map { colorNames[$0]! },
+                    automatic: gradient.automatic))))
         }
 
         if input.platform == "macosx" {
