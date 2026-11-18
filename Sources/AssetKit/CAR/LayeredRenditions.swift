@@ -37,8 +37,8 @@ enum LayeredRenditions {
 /// ("AppIcon_Assets/Color-2"); the color renditions themselves are ordinary
 /// `ColorBody` bitmaps at part 217.
 struct NamedGradientBody: Sendable {
-    /// Full facet names of the stop colors, in order (exactly two stops:
-    /// Icon Composer gradients are vertical top/bottom pairs).
+    /// Full facet names of the stop colors, in order: two stops for a
+    /// vertical top/bottom gradient, one for an automatic gradient.
     var stopColorNames: [String]
 }
 
@@ -126,7 +126,8 @@ extension CSIWriter {
     }
 
     static func namedGradient(name: String, body: NamedGradientBody) -> Data {
-        precondition(body.stopColorNames.count == 2, "Icon Composer gradients have two stops")
+        let stopCount = body.stopColorNames.count
+        precondition(stopCount == 1 || stopCount == 2, "Icon Composer gradients have one or two stops")
         // Body (IceCubes oracle, system-light 94 bytes):
         // 'ARGG', 2, 1 (linear), stop0 position 0.0, start point (0.5, 0.0),
         // stop point (0.5, 1.0), 0.0, then per stop: u32 byte length (name +
@@ -134,10 +135,13 @@ extension CSIWriter {
         // before the second name. The (0.5, 0.0)-(0.5, 1.0) line is Apple's
         // constant vertical axis; the leading/trailing 0.0 words are
         // unwritten fields pinned by the fixture.
+        // An automatic gradient (actool 27.2) has one stop: 'ARGG', 1, 0,
+        // the same axis words, and one name with no stop position (63 bytes
+        // for "AppIcon_Assets/Color-2").
         var w = ByteWriter()
         w.writeFourCC("ARGG")
-        w.writeLE(UInt32(2))
-        w.writeLE(UInt32(1))
+        w.writeLE(UInt32(stopCount))
+        w.writeLE(UInt32(stopCount - 1))
         w.writeLE(Float(0.0).bitPattern)
         w.writeLE(Float(0.5).bitPattern)
         w.writeLE(Float(0.0).bitPattern)
@@ -148,7 +152,7 @@ extension CSIWriter {
             let bytes = Array((colorName + "\0").utf8)
             w.writeLE(UInt32(bytes.count))
             w.write(bytes)
-            if index == 0 {
+            if index + 1 < stopCount {
                 w.writeLE(Float(1.0).bitPattern)
             }
         }
