@@ -50,6 +50,25 @@ struct CSIWriterTests {
         #expect(data.count >= 184)
     }
 
+    @Test("Bitmap bytes-per-row TVL is the exact stride the rows are packed at", arguments: [29, 58, 60, 87])
+    func bytesPerRowIsExact(width: UInt32) throws {
+        let body = BitmapBody(
+            width: width, height: width,
+            pixelsBGRA: [UInt8](repeating: 0, count: Int(width * width) * 4),
+            colorSpaceID: 1,
+            kind: .appIcon,
+            renditionName: "icon.png"
+        )
+        let bytes = [UInt8](CSIWriter.bitmap(name: "AppIcon", body: body, scaleFactor: 300))
+        // TVL type 1007, value length 4, then the stride.
+        let tag: [UInt8] = [0xEF, 0x03, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00]
+        let start = try #require((184..<(bytes.count - tag.count - 4)).first {
+            Array(bytes[$0..<($0 + tag.count)]) == tag
+        })
+        let value = bytes[(start + 8)..<(start + 12)].reversed().reduce(UInt32(0)) { $0 << 8 | UInt32($1) }
+        #expect(value == width * 4)
+    }
+
     @Test("Color CSI body starts with COLR magic and four IEEE-754 doubles")
     func colorBody() {
         let body = ColorBody(red: 1, green: 0, blue: 0.5, alpha: 1, colorSpaceID: 0)
